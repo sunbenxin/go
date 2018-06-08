@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// HTTP client implementation. See RFC 2616.
+// HTTP client implementation. See RFC 7230 through 7235.
 //
 // This is the low-level Transport implementation of RoundTripper.
 // The high-level interface is in client.go.
@@ -28,8 +28,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang_org/x/net/lex/httplex"
-	"golang_org/x/net/proxy"
+	"golang_org/x/net/http/httpguts"
+	"golang_org/x/net/http/httpproxy"
 )
 
 // DefaultTransport is the default implementation of Transport and is
@@ -73,6 +73,15 @@ const DefaultMaxIdleConnsPerHost = 2
 // and how the Transport is configured. The DefaultTransport supports HTTP/2.
 // To explicitly enable HTTP/2 on a transport, use golang.org/x/net/http2
 // and call ConfigureTransport. See the package docs for more about HTTP/2.
+//
+// The Transport will send CONNECT requests to a proxy for its own use
+// when processing HTTPS requests, but Transport should generally not
+// be used to send a CONNECT request. That is, the Request passed to
+// the RoundTrip method should not have a Method of "CONNECT", as Go's
+// HTTP/1.x implementation does not support full-duplex request bodies
+// being written while the response body is streamed. Go's HTTP/2
+// implementation does support full duplex, but many CONNECT proxies speak
+// HTTP/1.x.
 type Transport struct {
 	idleMu     sync.Mutex
 	wantIdle   bool                                // user has requested to close all idle conns
@@ -100,9 +109,19 @@ type Transport struct {
 	// DialContext specifies the dial function for creating unencrypted TCP connections.
 	// If DialContext is nil (and the deprecated Dial below is also nil),
 	// then the transport dials using package net.
+	//
+	// DialContext runs concurrently with calls to RoundTrip.
+	// A RoundTrip call that initiates a dial may end up using
+	// an connection dialed previously when the earlier connection
+	// becomes idle before the later DialContext completes.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
 	// Dial specifies the dial function for creating unencrypted TCP connections.
+	//
+	// Dial runs concurrently with calls to RoundTrip.
+	// A RoundTrip call that initiates a dial may end up using
+	// an connection dialed previously when the earlier connection
+	// becomes idle before the later Dial completes.
 	//
 	// Deprecated: Use DialContext instead, which allows the transport
 	// to cancel dials as soon as they are no longer needed.
@@ -264,39 +283,7 @@ func (t *Transport) onceSetNextProtoDefaults() {
 // As a special case, if req.URL.Host is "localhost" (with or without
 // a port number), then a nil URL and nil error will be returned.
 func ProxyFromEnvironment(req *Request) (*url.URL, error) {
-	var proxy string
-	if req.URL.Scheme == "https" {
-		proxy = httpsProxyEnv.Get()
-	}
-	if proxy == "" {
-		proxy = httpProxyEnv.Get()
-		if proxy != "" && os.Getenv("REQUEST_METHOD") != "" {
-			return nil, errors.New("net/http: refusing to use HTTP_PROXY value in CGI environment; see golang.org/s/cgihttpproxy")
-		}
-	}
-	if proxy == "" {
-		return nil, nil
-	}
-	if !useProxy(canonicalAddr(req.URL)) {
-		return nil, nil
-	}
-	proxyURL, err := url.Parse(proxy)
-	if err != nil ||
-		(proxyURL.Scheme != "http" &&
-			proxyURL.Scheme != "https" &&
-			proxyURL.Scheme != "socks5") {
-		// proxy was bogus. Try prepending "http://" to it and
-		// see if that parses correctly. If not, we fall
-		// through and complain about the original one.
-		if proxyURL, err := url.Parse("http://" + proxy); err == nil {
-			return proxyURL, nil
-		}
-
-	}
-	if err != nil {
-		return nil, fmt.Errorf("invalid proxy address %q: %v", proxy, err)
-	}
-	return proxyURL, nil
+	return envProxyFunc()(req.URL)
 }
 
 // ProxyURL returns a proxy function (for use in a Transport)
@@ -334,11 +321,8 @@ func (tr *transportRequest) setError(err error) {
 	tr.mu.Unlock()
 }
 
-// RoundTrip implements the RoundTripper interface.
-//
-// For higher-level HTTP client support (such as handling of cookies
-// and redirects), see Get, Post, and the Client type.
-func (t *Transport) RoundTrip(req *Request) (*Response, error) {
+// roundTrip implements a RoundTripper over HTTP.
+func (t *Transport) roundTrip(req *Request) (*Response, error) {
 	t.nextProtoOnce.Do(t.onceSetNextProtoDefaults)
 	ctx := req.Context()
 	trace := httptrace.ContextClientTrace(ctx)
@@ -355,11 +339,11 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 	isHTTP := scheme == "http" || scheme == "https"
 	if isHTTP {
 		for k, vv := range req.Header {
-			if !httplex.ValidHeaderFieldName(k) {
+			if !httpguts.ValidHeaderFieldName(k) {
 				return nil, fmt.Errorf("net/http: invalid header field name %q", k)
 			}
 			for _, v := range vv {
-				if !httplex.ValidHeaderFieldValue(v) {
+				if !httpguts.ValidHeaderFieldValue(v) {
 					return nil, fmt.Errorf("net/http: invalid header field value %q for key %v", v, k)
 				}
 			}
@@ -443,7 +427,7 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 // HTTP request on a new connection. The non-nil input error is the
 // error from roundTrip.
 func (pc *persistConn) shouldRetryRequest(req *Request, err error) bool {
-	if err == http2ErrNoCachedConn {
+	if http2isNoCachedConnError(err) {
 		// Issue 16582: if the user started a bunch of
 		// requests at once, they can all pick the same conn
 		// and violate the server's max concurrent streams.
@@ -566,44 +550,25 @@ func (t *Transport) cancelRequest(req *Request, err error) {
 //
 
 var (
-	httpProxyEnv = &envOnce{
-		names: []string{"HTTP_PROXY", "http_proxy"},
-	}
-	httpsProxyEnv = &envOnce{
-		names: []string{"HTTPS_PROXY", "https_proxy"},
-	}
-	noProxyEnv = &envOnce{
-		names: []string{"NO_PROXY", "no_proxy"},
-	}
+	// proxyConfigOnce guards proxyConfig
+	envProxyOnce      sync.Once
+	envProxyFuncValue func(*url.URL) (*url.URL, error)
 )
 
-// envOnce looks up an environment variable (optionally by multiple
-// names) once. It mitigates expensive lookups on some platforms
-// (e.g. Windows).
-type envOnce struct {
-	names []string
-	once  sync.Once
-	val   string
+// defaultProxyConfig returns a ProxyConfig value looked up
+// from the environment. This mitigates expensive lookups
+// on some platforms (e.g. Windows).
+func envProxyFunc() func(*url.URL) (*url.URL, error) {
+	envProxyOnce.Do(func() {
+		envProxyFuncValue = httpproxy.FromEnvironment().ProxyFunc()
+	})
+	return envProxyFuncValue
 }
 
-func (e *envOnce) Get() string {
-	e.once.Do(e.init)
-	return e.val
-}
-
-func (e *envOnce) init() {
-	for _, n := range e.names {
-		e.val = os.Getenv(n)
-		if e.val != "" {
-			return
-		}
-	}
-}
-
-// reset is used by tests
-func (e *envOnce) reset() {
-	e.once = sync.Once{}
-	e.val = ""
+// resetProxyConfig is used by tests.
+func resetProxyConfig() {
+	envProxyOnce = sync.Once{}
+	envProxyFuncValue = nil
 }
 
 func (t *Transport) connectMethodForRequest(treq *transportRequest) (cm connectMethod, err error) {
@@ -646,9 +611,14 @@ var (
 	errTooManyIdleHost    = errors.New("http: putIdleConn: too many idle connections for host")
 	errCloseIdleConns     = errors.New("http: CloseIdleConnections called")
 	errReadLoopExiting    = errors.New("http: persistConn.readLoop exiting")
-	errServerClosedIdle   = errors.New("http: server closed idle connection")
 	errIdleConnTimeout    = errors.New("http: idle connection timeout")
 	errNotCachingH2Conn   = errors.New("http: not caching alternate protocol's connections")
+
+	// errServerClosedIdle is not seen by users for idempotent requests, but may be
+	// seen by a user if the server shuts down an idle connection and sends its FIN
+	// in flight with already-written POST body bytes from the client.
+	// See https://github.com/golang/go/issues/19943#issuecomment-355607646
+	errServerClosedIdle = errors.New("http: server closed idle connection")
 )
 
 // transportReadFromServerError is used by Transport.readLoop when the
@@ -999,23 +969,6 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (*persistC
 	}
 }
 
-type oneConnDialer <-chan net.Conn
-
-func newOneConnDialer(c net.Conn) proxy.Dialer {
-	ch := make(chan net.Conn, 1)
-	ch <- c
-	return oneConnDialer(ch)
-}
-
-func (d oneConnDialer) Dial(network, addr string) (net.Conn, error) {
-	select {
-	case c := <-d:
-		return c, nil
-	default:
-		return nil, io.EOF
-	}
-}
-
 // The connect method and the transport can both specify a TLS
 // Host name.  The transport's name takes precedence if present.
 func chooseTLSHost(cm connectMethod, t *Transport) string {
@@ -1063,12 +1016,6 @@ func (pconn *persistConn) addTLS(name string, trace *httptrace.ClientTrace) erro
 			trace.TLSHandshakeDone(tls.ConnectionState{}, err)
 		}
 		return err
-	}
-	if !cfg.InsecureSkipVerify {
-		if err := tlsConn.VerifyHostname(cfg.ServerName); err != nil {
-			plainConn.Close()
-			return err
-		}
 	}
 	cs := tlsConn.ConnectionState()
 	if trace != nil && trace.TLSHandshakeDone != nil {
@@ -1148,18 +1095,19 @@ func (t *Transport) dialConn(ctx context.Context, cm connectMethod) (*persistCon
 		// Do nothing. Not using a proxy.
 	case cm.proxyURL.Scheme == "socks5":
 		conn := pconn.conn
-		var auth *proxy.Auth
+		d := socksNewDialer("tcp", conn.RemoteAddr().String())
 		if u := cm.proxyURL.User; u != nil {
-			auth = &proxy.Auth{}
-			auth.User = u.Username()
+			auth := &socksUsernamePassword{
+				Username: u.Username(),
+			}
 			auth.Password, _ = u.Password()
+			d.AuthMethods = []socksAuthMethod{
+				socksAuthMethodNotRequired,
+				socksAuthMethodUsernamePassword,
+			}
+			d.Authenticate = auth.Authenticate
 		}
-		p, err := proxy.SOCKS5("", cm.addr(), auth, newOneConnDialer(conn))
-		if err != nil {
-			conn.Close()
-			return nil, err
-		}
-		if _, err := p.Dial("tcp", cm.targetAddr); err != nil {
+		if _, err := d.DialWithConn(ctx, conn, "tcp", cm.targetAddr); err != nil {
 			conn.Close()
 			return nil, err
 		}
@@ -1239,63 +1187,6 @@ func (w persistConnWriter) Write(p []byte) (n int, err error) {
 	n, err = w.pc.conn.Write(p)
 	w.pc.nwrite += int64(n)
 	return
-}
-
-// useProxy reports whether requests to addr should use a proxy,
-// according to the NO_PROXY or no_proxy environment variable.
-// addr is always a canonicalAddr with a host and port.
-func useProxy(addr string) bool {
-	if len(addr) == 0 {
-		return true
-	}
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return false
-	}
-	if host == "localhost" {
-		return false
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() {
-			return false
-		}
-	}
-
-	noProxy := noProxyEnv.Get()
-	if noProxy == "*" {
-		return false
-	}
-
-	addr = strings.ToLower(strings.TrimSpace(addr))
-	if hasPort(addr) {
-		addr = addr[:strings.LastIndex(addr, ":")]
-	}
-
-	for _, p := range strings.Split(noProxy, ",") {
-		p = strings.ToLower(strings.TrimSpace(p))
-		if len(p) == 0 {
-			continue
-		}
-		if hasPort(p) {
-			p = p[:strings.LastIndex(p, ":")]
-		}
-		if addr == p {
-			return false
-		}
-		if len(p) == 0 {
-			// There is no host part, likely the entry is malformed; ignore.
-			continue
-		}
-		if p[0] == '.' && (strings.HasSuffix(addr, p) || addr == p[1:]) {
-			// no_proxy ".foo.com" matches "bar.foo.com" or "foo.com"
-			return false
-		}
-		if p[0] != '.' && strings.HasSuffix(addr, p) && addr[len(addr)-len(p)-1] == '.' {
-			// no_proxy "foo.com" matches "bar.foo.com"
-			return false
-		}
-	}
-	return true
 }
 
 // connectMethod is the map key (in its String form) for keeping persistent
@@ -1965,7 +1856,7 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 		//
 		// Note that we don't request this for HEAD requests,
 		// due to a bug in nginx:
-		//   http://trac.nginx.org/nginx/ticket/358
+		//   https://trac.nginx.org/nginx/ticket/358
 		//   https://golang.org/issue/5522
 		//
 		// We don't request gzip if the request is for a range, since

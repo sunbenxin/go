@@ -34,6 +34,7 @@ var (
 	tags    = flag.String("tags", "", "space-separated list of build tags to apply when parsing")
 	tagList = []string{} // exploded version of tags flag; set in main
 
+	vcfg          vetConfig
 	mustTypecheck bool
 )
 
@@ -194,9 +195,11 @@ type File struct {
 	// Parsed package "foo" when checking package "foo_test"
 	basePkg *Package
 
-	// The objects that are receivers of a "String() string" method.
+	// The keys are the objects that are receivers of a "String()
+	// string" method. The value reports whether the method has a
+	// pointer receiver.
 	// This is used by the recursiveStringer method in print.go.
-	stringers map[*ast.Object]bool
+	stringerPtrs map[*ast.Object]bool
 
 	// Registered checkers to run.
 	checkers map[ast.Node][]func(*File, ast.Node)
@@ -287,9 +290,13 @@ func prefixDirectory(directory string, names []string) {
 type vetConfig struct {
 	Compiler    string
 	Dir         string
+	ImportPath  string
 	GoFiles     []string
 	ImportMap   map[string]string
 	PackageFile map[string]string
+	Standard    map[string]bool
+
+	SucceedOnTypecheckFailure bool
 
 	imp types.Importer
 }
@@ -306,6 +313,11 @@ func (v *vetConfig) Import(path string) (*types.Package, error) {
 		return nil, fmt.Errorf("unknown import path %q", path)
 	}
 	if v.PackageFile[p] == "" {
+		if v.Compiler == "gccgo" && v.Standard[path] {
+			// gccgo doesn't have sources for standard library packages,
+			// but the importer will do the right thing.
+			return v.imp.Import(path)
+		}
 		return nil, fmt.Errorf("unknown package file for import %q", path)
 	}
 	return v.imp.Import(p)
@@ -314,6 +326,10 @@ func (v *vetConfig) Import(path string) (*types.Package, error) {
 func (v *vetConfig) openPackageFile(path string) (io.ReadCloser, error) {
 	file := v.PackageFile[path]
 	if file == "" {
+		if v.Compiler == "gccgo" && v.Standard[path] {
+			// The importer knows how to handle this.
+			return nil, nil
+		}
 		// Note that path here has been translated via v.ImportMap,
 		// unlike in the error in Import above. We prefer the error in
 		// Import, but it's worth diagnosing this one too, just in case.
@@ -332,7 +348,6 @@ func doPackageCfg(cfgFile string) {
 	if err != nil {
 		errorf("%v", err)
 	}
-	var vcfg vetConfig
 	if err := json.Unmarshal(js, &vcfg); err != nil {
 		errorf("parsing vet config %s: %v", cfgFile, err)
 	}
@@ -400,23 +415,24 @@ func doPackage(names []string, basePkg *Package) *Package {
 			warnf("%s: %s", name, err)
 			return nil
 		}
-		checkBuildTag(name, data)
 		var parsedFile *ast.File
 		if strings.HasSuffix(name, ".go") {
-			parsedFile, err = parser.ParseFile(fs, name, data, 0)
+			parsedFile, err = parser.ParseFile(fs, name, data, parser.ParseComments)
 			if err != nil {
 				warnf("%s: %s", name, err)
 				return nil
 			}
 			astFiles = append(astFiles, parsedFile)
 		}
-		files = append(files, &File{
+		file := &File{
 			fset:    fs,
 			content: data,
 			name:    name,
 			file:    parsedFile,
 			dead:    make(map[ast.Node]bool),
-		})
+		}
+		checkBuildTag(file)
+		files = append(files, file)
 	}
 	if len(astFiles) == 0 {
 		return nil
@@ -427,6 +443,9 @@ func doPackage(names []string, basePkg *Package) *Package {
 	// Type check the package.
 	errs := pkg.check(fs, astFiles)
 	if errs != nil {
+		if vcfg.SucceedOnTypecheckFailure {
+			os.Exit(0)
+		}
 		if *verbose || mustTypecheck {
 			for _, err := range errs {
 				fmt.Fprintf(os.Stderr, "%v\n", err)

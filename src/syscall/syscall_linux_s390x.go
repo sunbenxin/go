@@ -8,7 +8,6 @@ import "unsafe"
 
 const (
 	_SYS_dup       = SYS_DUP2
-	_SYS_getdents  = SYS_GETDENTS64
 	_SYS_setgroups = SYS_SETGROUPS
 )
 
@@ -46,6 +45,7 @@ const (
 //sysnb	setgroups(n int, list *_Gid_t) (err error)
 
 //sysnb	Gettimeofday(tv *Timeval) (err error)
+//sys	EpollWait(epfd int, events []EpollEvent, msec int) (n int, err error)
 
 func Time(t *Time_t) (tt Time_t, err error) {
 	var tv Timeval

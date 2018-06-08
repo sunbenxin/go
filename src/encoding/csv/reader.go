@@ -91,7 +91,7 @@ var (
 var errInvalidDelim = errors.New("csv: invalid field or comment delimiter")
 
 func validDelim(r rune) bool {
-	return r != 0 && r != '\r' && r != '\n' && utf8.ValidRune(r) && r != utf8.RuneError
+	return r != 0 && r != '"' && r != '\r' && r != '\n' && utf8.ValidRune(r) && r != utf8.RuneError
 }
 
 // A Reader reads records from a CSV-encoded file.
@@ -224,6 +224,10 @@ func (r *Reader) readLine() ([]byte, error) {
 	}
 	if len(line) > 0 && err == io.EOF {
 		err = nil
+		// For backwards compatibility, drop trailing \r before EOF.
+		if line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
 	}
 	r.numLine++
 	// Normalize \r\n to \n on all input lines.

@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 // Network file descriptor.
@@ -121,7 +122,7 @@ func (fd *netFD) connect(ctx context.Context, la, ra syscall.Sockaddr) (rsa sysc
 				// == nil). Because we've now poisoned the connection
 				// by making it unwritable, don't return a successful
 				// dial. This was issue 16523.
-				ret = ctxErr
+				ret = mapErr(ctxErr)
 				fd.Close() // prevent a leak
 			}
 		}()
@@ -173,7 +174,7 @@ func (fd *netFD) connect(ctx context.Context, la, ra syscall.Sockaddr) (rsa sysc
 				return rsa, nil
 			}
 		default:
-			return nil, os.NewSyscallError("getsockopt", err)
+			return nil, os.NewSyscallError("connect", err)
 		}
 		runtime.KeepAlive(fd)
 	}
@@ -263,19 +264,6 @@ var tryDupCloexec = int32(1)
 func dupCloseOnExec(fd int) (newfd int, err error) {
 	if atomic.LoadInt32(&tryDupCloexec) == 1 {
 		r0, _, e1 := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_DUPFD_CLOEXEC, 0)
-		if runtime.GOOS == "darwin" && e1 == syscall.EBADF {
-			// On OS X 10.6 and below (but we only support
-			// >= 10.6), F_DUPFD_CLOEXEC is unsupported
-			// and fcntl there falls back (undocumented)
-			// to doing an ioctl instead, returning EBADF
-			// in this case because fd is not of the
-			// expected device fd type. Treat it as
-			// EINVAL instead, so we fall back to the
-			// normal dup path.
-			// TODO: only do this on 10.6 if we can detect 10.6
-			// cheaply.
-			e1 = syscall.EINVAL
-		}
 		switch e1 {
 		case 0:
 			return int(r0), nil
@@ -309,13 +297,17 @@ func (fd *netFD) dup() (f *os.File, err error) {
 		return nil, err
 	}
 
-	// We want blocking mode for the new fd, hence the double negative.
-	// This also puts the old fd into blocking mode, meaning that
-	// I/O will block the thread instead of letting us use the epoll server.
-	// Everything will still work, just with more threads.
-	if err = syscall.SetNonblock(ns, false); err != nil {
-		return nil, os.NewSyscallError("setnonblock", err)
-	}
-
 	return os.NewFile(uintptr(ns), fd.name()), nil
+}
+
+func (fd *netFD) SetDeadline(t time.Time) error {
+	return fd.pfd.SetDeadline(t)
+}
+
+func (fd *netFD) SetReadDeadline(t time.Time) error {
+	return fd.pfd.SetReadDeadline(t)
+}
+
+func (fd *netFD) SetWriteDeadline(t time.Time) error {
+	return fd.pfd.SetWriteDeadline(t)
 }

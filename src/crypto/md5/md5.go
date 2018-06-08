@@ -63,7 +63,8 @@ func (d *digest) MarshalBinary() ([]byte, error) {
 	b = appendUint32(b, d.s[1])
 	b = appendUint32(b, d.s[2])
 	b = appendUint32(b, d.s[3])
-	b = append(b, d.x[:]...)
+	b = append(b, d.x[:d.nx]...)
+	b = b[:len(b)+len(d.x)-d.nx] // already zero
 	b = appendUint64(b, d.len)
 	return b, nil
 }
@@ -159,10 +160,10 @@ func (d *digest) Write(p []byte) (nn int, err error) {
 	return
 }
 
-func (d0 *digest) Sum(in []byte) []byte {
-	// Make a copy of d0 so that caller can keep writing and summing.
-	d := *d0
-	hash := d.checkSum()
+func (d *digest) Sum(in []byte) []byte {
+	// Make a copy of d so that caller can keep writing and summing.
+	d0 := *d
+	hash := d0.checkSum()
 	return append(in, hash[:]...)
 }
 

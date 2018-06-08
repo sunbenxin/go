@@ -82,7 +82,8 @@ const (
 type FileHeader struct {
 	// Name is the name of the file.
 	// It must be a relative path, not start with a drive letter (e.g. C:),
-	// and must use forward slashes instead of back slashes.
+	// and must use forward slashes instead of back slashes. A trailing slash
+	// indicates that this file is a directory and should have no data.
 	Name string
 
 	// Comment is any arbitrary user-defined string shorter than 64KiB.
@@ -201,7 +202,7 @@ func timeZone(offset time.Duration) *time.Location {
 
 // msDosTimeToTime converts an MS-DOS date and time into a time.Time.
 // The resolution is 2s.
-// See: http://msdn.microsoft.com/en-us/library/ms724247(v=VS.85).aspx
+// See: https://msdn.microsoft.com/en-us/library/ms724247(v=VS.85).aspx
 func msDosTimeToTime(dosDate, dosTime uint16) time.Time {
 	return time.Date(
 		// date bits 0-4: day of month; 5-8: month; 9-15: years since 1980
@@ -221,22 +222,18 @@ func msDosTimeToTime(dosDate, dosTime uint16) time.Time {
 
 // timeToMsDosTime converts a time.Time to an MS-DOS date and time.
 // The resolution is 2s.
-// See: http://msdn.microsoft.com/en-us/library/ms724274(v=VS.85).aspx
+// See: https://msdn.microsoft.com/en-us/library/ms724274(v=VS.85).aspx
 func timeToMsDosTime(t time.Time) (fDate uint16, fTime uint16) {
 	fDate = uint16(t.Day() + int(t.Month())<<5 + (t.Year()-1980)<<9)
 	fTime = uint16(t.Second()/2 + t.Minute()<<5 + t.Hour()<<11)
 	return
 }
 
-// ModTime returns the modification time in UTC.
-// This returns Modified if non-zero, otherwise it computes the timestamp
-// from the legacy ModifiedDate and ModifiedTime fields.
+// ModTime returns the modification time in UTC using the legacy
+// ModifiedDate and ModifiedTime fields.
 //
 // Deprecated: Use Modified instead.
 func (h *FileHeader) ModTime() time.Time {
-	if !h.Modified.IsZero() {
-		return h.Modified.UTC() // Convert to UTC for compatibility
-	}
 	return msDosTimeToTime(h.ModifiedDate, h.ModifiedTime)
 }
 

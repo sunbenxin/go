@@ -6,10 +6,10 @@ package syscall
 
 const (
 	_SYS_dup       = SYS_DUP3
-	_SYS_getdents  = SYS_GETDENTS64
 	_SYS_setgroups = SYS_SETGROUPS
 )
 
+//sys	EpollWait(epfd int, events []EpollEvent, msec int) (n int, err error) = SYS_EPOLL_PWAIT
 //sys	Fchown(fd int, uid int, gid int) (err error)
 //sys	Fstat(fd int, stat *Stat_t) (err error)
 //sys	Fstatat(fd int, path string, stat *Stat_t, flags int) (err error)
@@ -75,8 +75,11 @@ type sigset_t struct {
 //sys	pselect(nfd int, r *FdSet, w *FdSet, e *FdSet, timeout *Timespec, sigmask *sigset_t) (n int, err error) = SYS_PSELECT6
 
 func Select(nfd int, r *FdSet, w *FdSet, e *FdSet, timeout *Timeval) (n int, err error) {
-	ts := Timespec{Sec: timeout.Sec, Nsec: timeout.Usec * 1000}
-	return pselect(nfd, r, w, e, &ts, nil)
+	var ts *Timespec
+	if timeout != nil {
+		ts = &Timespec{Sec: timeout.Sec, Nsec: timeout.Usec * 1000}
+	}
+	return pselect(nfd, r, w, e, ts, nil)
 }
 
 //sysnb	Gettimeofday(tv *Timeval) (err error)

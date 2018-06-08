@@ -6,6 +6,7 @@
 package load
 
 import (
+	"bytes"
 	"fmt"
 	"go/build"
 	"go/token"
@@ -14,8 +15,10 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"cmd/go/internal/base"
 	"cmd/go/internal/cfg"
@@ -46,6 +49,9 @@ type PackagePublic struct {
 	Root          string `json:",omitempty"` // Go root or Go path dir containing this package
 	ConflictDir   string `json:",omitempty"` // Dir is hidden by this other directory
 	BinaryOnly    bool   `json:",omitempty"` // package cannot be recompiled
+	ForTest       string `json:",omitempty"` // package is only for use in named test
+	DepOnly       bool   `json:",omitempty"` // package is only as a dependency, not explicitly listed
+	Export        string `json:",omitempty"` // file containing export data (set by go list -export)
 
 	// Stale and StaleReason remain here *only* for the list command.
 	// They are only initialized in preparation for list execution.
@@ -54,6 +60,8 @@ type PackagePublic struct {
 	StaleReason string `json:",omitempty"` // why is Stale true?
 
 	// Source files
+	// If you add to this list you MUST add to p.AllFiles (below) too.
+	// Otherwise file name security lists will not apply to any new additions.
 	GoFiles        []string `json:",omitempty"` // .go source files (excluding CgoFiles, TestGoFiles, XTestGoFiles)
 	CgoFiles       []string `json:",omitempty"` // .go sources files that import "C"
 	IgnoredGoFiles []string `json:",omitempty"` // .go sources ignored due to build constraints
@@ -85,10 +93,44 @@ type PackagePublic struct {
 	DepsErrors []*PackageError `json:",omitempty"` // errors loading dependencies
 
 	// Test information
+	// If you add to this list you MUST add to p.AllFiles (below) too.
+	// Otherwise file name security lists will not apply to any new additions.
 	TestGoFiles  []string `json:",omitempty"` // _test.go files in package
 	TestImports  []string `json:",omitempty"` // imports from TestGoFiles
 	XTestGoFiles []string `json:",omitempty"` // _test.go files outside package
 	XTestImports []string `json:",omitempty"` // imports from XTestGoFiles
+}
+
+// AllFiles returns the names of all the files considered for the package.
+// This is used for sanity and security checks, so we include all files,
+// even IgnoredGoFiles, because some subcommands consider them.
+// The go/build package filtered others out (like foo_wrongGOARCH.s)
+// and that's OK.
+func (p *Package) AllFiles() []string {
+	return str.StringList(
+		p.GoFiles,
+		p.CgoFiles,
+		p.IgnoredGoFiles,
+		p.CFiles,
+		p.CXXFiles,
+		p.MFiles,
+		p.HFiles,
+		p.FFiles,
+		p.SFiles,
+		p.SwigFiles,
+		p.SwigCXXFiles,
+		p.SysoFiles,
+		p.TestGoFiles,
+		p.XTestGoFiles,
+	)
+}
+
+// Desc returns the package "description", for use in b.showOutput.
+func (p *Package) Desc() string {
+	if p.ForTest != "" {
+		return p.ImportPath + " [" + p.ForTest + ".test]"
+	}
+	return p.ImportPath
 }
 
 type PackageInternal struct {
@@ -106,6 +148,7 @@ type PackageInternal struct {
 	CoverVars    map[string]*CoverVar // variables created by coverage analysis
 	OmitDebug    bool                 // tell linker not to write debug information
 	GobinSubdir  bool                 // install target would be subdir of GOBIN
+	TestmainGo   *[]byte              // content for _testmain.go
 
 	Asmflags   []string // -asmflags for this package
 	Gcflags    []string // -gcflags for this package
@@ -139,7 +182,7 @@ func (e *NoGoError) Error() string {
 	return "no Go files in " + e.Package.Dir
 }
 
-// Vendored returns the vendor-resolved version of imports,
+// Resolve returns the resolved version of imports,
 // which should be p.TestImports or p.XTestImports, NOT p.Imports.
 // The imports in p.TestImports and p.XTestImports are not recursively
 // loaded during the initial load of p, so they list the imports found in
@@ -149,14 +192,14 @@ func (e *NoGoError) Error() string {
 // can produce better error messages if it starts with the original paths.
 // The initial load of p loads all the non-test imports and rewrites
 // the vendored paths, so nothing should ever call p.vendored(p.Imports).
-func (p *Package) Vendored(imports []string) []string {
+func (p *Package) Resolve(imports []string) []string {
 	if len(imports) > 0 && len(p.Imports) > 0 && &imports[0] == &p.Imports[0] {
-		panic("internal error: p.vendored(p.Imports) called")
+		panic("internal error: p.Resolve(p.Imports) called")
 	}
 	seen := make(map[string]bool)
 	var all []string
 	for _, path := range imports {
-		path = VendoredImportPath(p, path)
+		path = ResolveImportPath(p, path)
 		if !seen[path] {
 			seen[path] = true
 			all = append(all, path)
@@ -351,16 +394,20 @@ func makeImportValid(r rune) rune {
 
 // Mode flags for loadImport and download (in get.go).
 const (
-	// UseVendor means that loadImport should do vendor expansion
-	// (provided the vendoring experiment is enabled).
-	// That is, useVendor means that the import path came from
-	// a source file and has not been vendor-expanded yet.
-	// Every import path should be loaded initially with useVendor,
-	// and then the expanded version (with the /vendor/ in it) gets
-	// recorded as the canonical import path. At that point, future loads
-	// of that package must not pass useVendor, because
+	// ResolveImport means that loadImport should do import path expansion.
+	// That is, ResolveImport means that the import path came from
+	// a source file and has not been expanded yet to account for
+	// vendoring or possible module adjustment.
+	// Every import path should be loaded initially with ResolveImport,
+	// and then the expanded version (for example with the /vendor/ in it)
+	// gets recorded as the canonical import path. At that point, future loads
+	// of that package must not pass ResolveImport, because
 	// disallowVendor will reject direct use of paths containing /vendor/.
-	UseVendor = 1 << iota
+	ResolveImport = 1 << iota
+
+	// ResolveModule is for download (part of "go get") and indicates
+	// that the module adjustment should be done, but not vendor adjustment.
+	ResolveModule
 
 	// GetTestDeps is for download (part of "go get") and indicates
 	// that test dependencies should be fetched too.
@@ -383,20 +430,17 @@ func LoadImport(path, srcDir string, parent *Package, stk *ImportStack, importPo
 	importPath := path
 	origPath := path
 	isLocal := build.IsLocalImport(path)
-	var debugDeprecatedImportcfgDir string
 	if isLocal {
 		importPath = dirToImportPath(filepath.Join(srcDir, path))
-	} else if DebugDeprecatedImportcfg.enabled {
-		if d, i := DebugDeprecatedImportcfg.lookup(parent, path); d != "" {
-			debugDeprecatedImportcfgDir = d
-			importPath = i
-		}
-	} else if mode&UseVendor != 0 {
-		// We do our own vendor resolution, because we want to
+	} else if mode&ResolveImport != 0 {
+		// We do our own path resolution, because we want to
 		// find out the key to use in packageCache without the
 		// overhead of repeated calls to buildContext.Import.
 		// The code is also needed in a few other places anyway.
-		path = VendoredImportPath(parent, path)
+		path = ResolveImportPath(parent, path)
+		importPath = path
+	} else if mode&ResolveModule != 0 {
+		path = ModuleImportPath(parent, path)
 		importPath = path
 	}
 
@@ -412,23 +456,17 @@ func LoadImport(path, srcDir string, parent *Package, stk *ImportStack, importPo
 		// Load package.
 		// Import always returns bp != nil, even if an error occurs,
 		// in order to return partial information.
-		var bp *build.Package
-		var err error
-		if debugDeprecatedImportcfgDir != "" {
-			bp, err = cfg.BuildContext.ImportDir(debugDeprecatedImportcfgDir, 0)
-		} else {
-			buildMode := build.ImportComment
-			if mode&UseVendor == 0 || path != origPath {
-				// Not vendoring, or we already found the vendored path.
-				buildMode |= build.IgnoreVendor
-			}
-			bp, err = cfg.BuildContext.Import(path, srcDir, buildMode)
+		buildMode := build.ImportComment
+		if mode&ResolveImport == 0 || path != origPath {
+			// Not vendoring, or we already found the vendored path.
+			buildMode |= build.IgnoreVendor
 		}
+		bp, err := cfg.BuildContext.Import(path, srcDir, buildMode)
 		bp.ImportPath = importPath
 		if cfg.GOBIN != "" {
 			bp.BinDir = cfg.GOBIN
 		}
-		if debugDeprecatedImportcfgDir == "" && err == nil && !isLocal && bp.ImportComment != "" && bp.ImportComment != path &&
+		if err == nil && !isLocal && bp.ImportComment != "" && bp.ImportComment != path &&
 			!strings.Contains(path, "/vendor/") && !strings.HasPrefix(path, "vendor/") {
 			err = fmt.Errorf("code in directory %s expects import %q", bp.Dir, bp.ImportComment)
 		}
@@ -437,7 +475,7 @@ func LoadImport(path, srcDir string, parent *Package, stk *ImportStack, importPo
 			p = setErrorPos(p, importPos)
 		}
 
-		if debugDeprecatedImportcfgDir == "" && origPath != cleanImport(origPath) {
+		if origPath != cleanImport(origPath) {
 			p.Error = &PackageError{
 				ImportStack: stk.Copy(),
 				Err:         fmt.Sprintf("non-canonical import path: %q should be %q", origPath, pathpkg.Clean(origPath)),
@@ -450,7 +488,7 @@ func LoadImport(path, srcDir string, parent *Package, stk *ImportStack, importPo
 	if perr := disallowInternal(srcDir, p, stk); perr != p {
 		return setErrorPos(perr, importPos)
 	}
-	if mode&UseVendor != 0 {
+	if mode&ResolveImport != 0 {
 		if perr := disallowVendor(srcDir, origPath, p, stk); perr != p {
 			return setErrorPos(perr, importPos)
 		}
@@ -509,7 +547,50 @@ func isDir(path string) bool {
 	return result
 }
 
-// VendoredImportPath returns the expansion of path when it appears in parent.
+// ResolveImportPath returns the true meaning of path when it appears in parent.
+// There are two different resolutions applied.
+// First, there is Go 1.5 vendoring (golang.org/s/go15vendor).
+// If vendor expansion doesn't trigger, then the path is also subject to
+// Go 1.11 vgo legacy conversion (golang.org/issue/25069).
+func ResolveImportPath(parent *Package, path string) (found string) {
+	found = VendoredImportPath(parent, path)
+	if found != path {
+		return found
+	}
+	return ModuleImportPath(parent, path)
+}
+
+// dirAndRoot returns the source directory and workspace root
+// for the package p, guaranteeing that root is a path prefix of dir.
+func dirAndRoot(p *Package) (dir, root string) {
+	dir = filepath.Clean(p.Dir)
+	root = filepath.Join(p.Root, "src")
+	if !str.HasFilePathPrefix(dir, root) || p.ImportPath != "command-line-arguments" && filepath.Join(root, p.ImportPath) != dir {
+		// Look for symlinks before reporting error.
+		dir = expandPath(dir)
+		root = expandPath(root)
+	}
+
+	if !str.HasFilePathPrefix(dir, root) || len(dir) <= len(root) || dir[len(root)] != filepath.Separator || p.ImportPath != "command-line-arguments" && !p.Internal.Local && filepath.Join(root, p.ImportPath) != dir {
+		base.Fatalf("unexpected directory layout:\n"+
+			"	import path: %s\n"+
+			"	root: %s\n"+
+			"	dir: %s\n"+
+			"	expand root: %s\n"+
+			"	expand dir: %s\n"+
+			"	separator: %s",
+			p.ImportPath,
+			filepath.Join(p.Root, "src"),
+			filepath.Clean(p.Dir),
+			root,
+			dir,
+			string(filepath.Separator))
+	}
+
+	return dir, root
+}
+
+// VendoredImportPath returns the vendor-expansion of path when it appears in parent.
 // If parent is x/y/z, then path might expand to x/y/z/vendor/path, x/y/vendor/path,
 // x/vendor/path, vendor/path, or else stay path if none of those exist.
 // VendoredImportPath returns the expanded path or, if no expansion is found, the original.
@@ -518,29 +599,7 @@ func VendoredImportPath(parent *Package, path string) (found string) {
 		return path
 	}
 
-	dir := filepath.Clean(parent.Dir)
-	root := filepath.Join(parent.Root, "src")
-	if !hasFilePathPrefix(dir, root) || parent.ImportPath != "command-line-arguments" && filepath.Join(root, parent.ImportPath) != dir {
-		// Look for symlinks before reporting error.
-		dir = expandPath(dir)
-		root = expandPath(root)
-	}
-
-	if !hasFilePathPrefix(dir, root) || len(dir) <= len(root) || dir[len(root)] != filepath.Separator || parent.ImportPath != "command-line-arguments" && !parent.Internal.Local && filepath.Join(root, parent.ImportPath) != dir {
-		base.Fatalf("unexpected directory layout:\n"+
-			"	import path: %s\n"+
-			"	root: %s\n"+
-			"	dir: %s\n"+
-			"	expand root: %s\n"+
-			"	expand dir: %s\n"+
-			"	separator: %s",
-			parent.ImportPath,
-			filepath.Join(parent.Root, "src"),
-			filepath.Clean(parent.Dir),
-			root,
-			dir,
-			string(filepath.Separator))
-	}
+	dir, root := dirAndRoot(parent)
 
 	vpath := "vendor/" + path
 	for i := len(dir); i >= len(root); i-- {
@@ -580,6 +639,164 @@ func VendoredImportPath(parent *Package, path string) (found string) {
 			}
 			return importPath[:len(importPath)-chopped] + "/" + vpath
 		}
+	}
+	return path
+}
+
+var (
+	modulePrefix   = []byte("\nmodule ")
+	goModPathCache = make(map[string]string)
+)
+
+// goModPath returns the module path in the go.mod in dir, if any.
+func goModPath(dir string) (path string) {
+	path, ok := goModPathCache[dir]
+	if ok {
+		return path
+	}
+	defer func() {
+		goModPathCache[dir] = path
+	}()
+
+	data, err := ioutil.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	var i int
+	if bytes.HasPrefix(data, modulePrefix[1:]) {
+		i = 0
+	} else {
+		i = bytes.Index(data, modulePrefix)
+		if i < 0 {
+			return ""
+		}
+		i++
+	}
+	line := data[i:]
+
+	// Cut line at \n, drop trailing \r if present.
+	if j := bytes.IndexByte(line, '\n'); j >= 0 {
+		line = line[:j]
+	}
+	if line[len(line)-1] == '\r' {
+		line = line[:len(line)-1]
+	}
+	line = line[len("module "):]
+
+	// If quoted, unquote.
+	path = strings.TrimSpace(string(line))
+	if path != "" && path[0] == '"' {
+		s, err := strconv.Unquote(path)
+		if err != nil {
+			return ""
+		}
+		path = s
+	}
+	return path
+}
+
+// findVersionElement returns the slice indices of the final version element /vN in path.
+// If there is no such element, it returns -1, -1.
+func findVersionElement(path string) (i, j int) {
+	j = len(path)
+	for i = len(path) - 1; i >= 0; i-- {
+		if path[i] == '/' {
+			if isVersionElement(path[i:j]) {
+				return i, j
+			}
+			j = i
+		}
+	}
+	return -1, -1
+}
+
+// isVersionElement reports whether s is a well-formed path version element:
+// v2, v3, v10, etc, but not v0, v05, v1.
+func isVersionElement(s string) bool {
+	if len(s) < 3 || s[0] != '/' || s[1] != 'v' || s[2] == '0' || s[2] == '1' && len(s) == 3 {
+		return false
+	}
+	for i := 2; i < len(s); i++ {
+		if s[i] < '0' || '9' < s[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// ModuleImportPath translates import paths found in go modules
+// back down to paths that can be resolved in ordinary builds.
+//
+// Define “new” code as code with a go.mod file in the same directory
+// or a parent directory. If an import in new code says x/y/v2/z but
+// x/y/v2/z does not exist and x/y/go.mod says “module x/y/v2”,
+// then go build will read the import as x/y/z instead.
+// See golang.org/issue/25069.
+func ModuleImportPath(parent *Package, path string) (found string) {
+	if parent == nil || parent.Root == "" {
+		return path
+	}
+
+	// If there are no vN elements in path, leave it alone.
+	// (The code below would do the same, but only after
+	// some other file system accesses that we can avoid
+	// here by returning early.)
+	if i, _ := findVersionElement(path); i < 0 {
+		return path
+	}
+
+	dir, root := dirAndRoot(parent)
+
+	// Consider dir and parents, up to and including root.
+	for i := len(dir); i >= len(root); i-- {
+		if i < len(dir) && dir[i] != filepath.Separator {
+			continue
+		}
+		if goModPath(dir[:i]) != "" {
+			goto HaveGoMod
+		}
+	}
+	// This code is not in a tree with a go.mod,
+	// so apply no changes to the path.
+	return path
+
+HaveGoMod:
+	// This import is in a tree with a go.mod.
+	// Allow it to refer to code in GOPATH/src/x/y/z as x/y/v2/z
+	// if GOPATH/src/x/y/go.mod says module "x/y/v2",
+
+	// If x/y/v2/z exists, use it unmodified.
+	if bp, _ := cfg.BuildContext.Import(path, "", build.IgnoreVendor); bp.Dir != "" {
+		return path
+	}
+
+	// Otherwise look for a go.mod supplying a version element.
+	// Some version-like elements may appear in paths but not
+	// be module versions; we skip over those to look for module
+	// versions. For example the module m/v2 might have a
+	// package m/v2/api/v1/foo.
+	limit := len(path)
+	for limit > 0 {
+		i, j := findVersionElement(path[:limit])
+		if i < 0 {
+			return path
+		}
+		if bp, _ := cfg.BuildContext.Import(path[:i], "", build.IgnoreVendor); bp.Dir != "" {
+			if mpath := goModPath(bp.Dir); mpath != "" {
+				// Found a valid go.mod file, so we're stopping the search.
+				// If the path is m/v2/p and we found m/go.mod that says
+				// "module m/v2", then we return "m/p".
+				if mpath == path[:j] {
+					return path[:i] + path[j:]
+				}
+				// Otherwise just return the original path.
+				// We didn't find anything worth rewriting,
+				// and the go.mod indicates that we should
+				// not consider parent directories.
+				return path
+			}
+		}
+		limit = i
 	}
 	return path
 }
@@ -670,14 +887,14 @@ func disallowInternal(srcDir string, p *Package, stk *ImportStack) *Package {
 		i-- // rewind over slash in ".../internal"
 	}
 	parent := p.Dir[:i+len(p.Dir)-len(p.ImportPath)]
-	if hasFilePathPrefix(filepath.Clean(srcDir), filepath.Clean(parent)) {
+	if str.HasFilePathPrefix(filepath.Clean(srcDir), filepath.Clean(parent)) {
 		return p
 	}
 
 	// Look for symlinks before reporting error.
 	srcDir = expandPath(srcDir)
 	parent = expandPath(parent)
-	if hasFilePathPrefix(filepath.Clean(srcDir), filepath.Clean(parent)) {
+	if str.HasFilePathPrefix(filepath.Clean(srcDir), filepath.Clean(parent)) {
 		return p
 	}
 
@@ -770,14 +987,14 @@ func disallowVendorVisibility(srcDir string, p *Package, stk *ImportStack) *Pack
 		return p
 	}
 	parent := p.Dir[:truncateTo]
-	if hasFilePathPrefix(filepath.Clean(srcDir), filepath.Clean(parent)) {
+	if str.HasFilePathPrefix(filepath.Clean(srcDir), filepath.Clean(parent)) {
 		return p
 	}
 
 	// Look for symlinks before reporting error.
 	srcDir = expandPath(srcDir)
 	parent = expandPath(parent)
-	if hasFilePathPrefix(filepath.Clean(srcDir), filepath.Clean(parent)) {
+	if str.HasFilePathPrefix(filepath.Clean(srcDir), filepath.Clean(parent)) {
 		return p
 	}
 
@@ -925,7 +1142,11 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 		if InstallTargetDir(p) == ToTool {
 			// This is for 'go tool'.
 			// Override all the usual logic and force it into the tool directory.
-			p.Target = filepath.Join(cfg.GOROOTpkg, "tool", full)
+			if cfg.BuildToolchainName == "gccgo" {
+				p.Target = filepath.Join(base.ToolDir, elem)
+			} else {
+				p.Target = filepath.Join(cfg.GOROOTpkg, "tool", full)
+			}
 		}
 		if p.Target != "" && cfg.BuildContext.GOOS == "windows" {
 			p.Target += ".exe"
@@ -967,7 +1188,7 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 
 	// Cgo translation adds imports of "runtime/cgo" and "syscall",
 	// except for certain packages, to avoid circular dependencies.
-	if p.UsesCgo() && (!p.Standard || !cgoExclude[p.ImportPath]) {
+	if p.UsesCgo() && (!p.Standard || !cgoExclude[p.ImportPath]) && cfg.BuildContext.Compiler != "gccgo" {
 		addImport("runtime/cgo")
 	}
 	if p.UsesCgo() && (!p.Standard || !cgoSyscallExclude[p.ImportPath]) {
@@ -976,7 +1197,9 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 
 	// SWIG adds imports of some standard packages.
 	if p.UsesSwig() {
-		addImport("runtime/cgo")
+		if cfg.BuildContext.Compiler != "gccgo" {
+			addImport("runtime/cgo")
+		}
 		addImport("syscall")
 		addImport("sync")
 
@@ -995,26 +1218,43 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 	// To avoid problems on case-insensitive files, we reject any package
 	// where two different input files have equal names under a case-insensitive
 	// comparison.
-	f1, f2 := str.FoldDup(str.StringList(
-		p.GoFiles,
-		p.CgoFiles,
-		p.IgnoredGoFiles,
-		p.CFiles,
-		p.CXXFiles,
-		p.MFiles,
-		p.HFiles,
-		p.FFiles,
-		p.SFiles,
-		p.SysoFiles,
-		p.SwigFiles,
-		p.SwigCXXFiles,
-		p.TestGoFiles,
-		p.XTestGoFiles,
-	))
+	inputs := p.AllFiles()
+	f1, f2 := str.FoldDup(inputs)
 	if f1 != "" {
 		p.Error = &PackageError{
 			ImportStack: stk.Copy(),
 			Err:         fmt.Sprintf("case-insensitive file name collision: %q and %q", f1, f2),
+		}
+		return
+	}
+
+	// If first letter of input file is ASCII, it must be alphanumeric.
+	// This avoids files turning into flags when invoking commands,
+	// and other problems we haven't thought of yet.
+	// Also, _cgo_ files must be generated by us, not supplied.
+	// They are allowed to have //go:cgo_ldflag directives.
+	// The directory scan ignores files beginning with _,
+	// so we shouldn't see any _cgo_ files anyway, but just be safe.
+	for _, file := range inputs {
+		if !SafeArg(file) || strings.HasPrefix(file, "_cgo_") {
+			p.Error = &PackageError{
+				ImportStack: stk.Copy(),
+				Err:         fmt.Sprintf("invalid input file name %q", file),
+			}
+			return
+		}
+	}
+	if name := pathpkg.Base(p.ImportPath); !SafeArg(name) {
+		p.Error = &PackageError{
+			ImportStack: stk.Copy(),
+			Err:         fmt.Sprintf("invalid input directory name %q", name),
+		}
+		return
+	}
+	if !SafeArg(p.ImportPath) {
+		p.Error = &PackageError{
+			ImportStack: stk.Copy(),
+			Err:         fmt.Sprintf("invalid import path %q", p.ImportPath),
 		}
 		return
 	}
@@ -1025,7 +1265,7 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 		if path == "C" {
 			continue
 		}
-		p1 := LoadImport(path, p.Dir, p, stk, p.Internal.Build.ImportPos[path], UseVendor)
+		p1 := LoadImport(path, p.Dir, p, stk, p.Internal.Build.ImportPos[path], ResolveImport)
 		if p.Standard && p.Error == nil && !p1.Standard && p1.Error == nil {
 			p.Error = &PackageError{
 				ImportStack: stk.Copy(),
@@ -1142,13 +1382,30 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 	}
 }
 
+// SafeArg reports whether arg is a "safe" command-line argument,
+// meaning that when it appears in a command-line, it probably
+// doesn't have some special meaning other than its own name.
+// Obviously args beginning with - are not safe (they look like flags).
+// Less obviously, args beginning with @ are not safe (they look like
+// GNU binutils flagfile specifiers, sometimes called "response files").
+// To be conservative, we reject almost any arg beginning with non-alphanumeric ASCII.
+// We accept leading . _ and / as likely in file system paths.
+// There is a copy of this function in cmd/compile/internal/gc/noder.go.
+func SafeArg(name string) bool {
+	if name == "" {
+		return false
+	}
+	c := name[0]
+	return '0' <= c && c <= '9' || 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z' || c == '.' || c == '_' || c == '/' || c >= utf8.RuneSelf
+}
+
 // LinkerDeps returns the list of linker-induced dependencies for main package p.
 func LinkerDeps(p *Package) []string {
 	// Everything links runtime.
 	deps := []string{"runtime"}
 
 	// External linking mode forces an import of runtime/cgo.
-	if externalLinkingForced(p) {
+	if externalLinkingForced(p) && cfg.BuildContext.Compiler != "gccgo" {
 		deps = append(deps, "runtime/cgo")
 	}
 	// On ARM with GOARM=5, it forces an import of math, for soft floating point.
@@ -1221,7 +1478,13 @@ func (p *Package) mkAbs(list []string) []string {
 // InternalGoFiles returns the list of Go files being built for the package,
 // using absolute paths.
 func (p *Package) InternalGoFiles() []string {
-	return p.mkAbs(str.StringList(p.GoFiles, p.CgoFiles, p.TestGoFiles, p.XTestGoFiles))
+	return p.mkAbs(str.StringList(p.GoFiles, p.CgoFiles, p.TestGoFiles))
+}
+
+// InternalXGoFiles returns the list of Go files being built for the XTest package,
+// using absolute paths.
+func (p *Package) InternalXGoFiles() []string {
+	return p.mkAbs(p.XTestGoFiles)
 }
 
 // InternalGoFiles returns the list of all Go files possibly relevant for the package,
@@ -1400,6 +1663,7 @@ func PackagesForBuild(args []string) []*Package {
 	for _, pkg := range pkgs {
 		if pkg.Error != nil {
 			base.Errorf("can't load package: %s", pkg.Error)
+			printed[pkg.Error] = true
 		}
 		for _, err := range pkg.DepsErrors {
 			// Since these are errors in dependencies,

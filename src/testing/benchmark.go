@@ -475,9 +475,6 @@ func (ctx *benchContext) processBench(b *B) {
 //
 // A subbenchmark is like any other benchmark. A benchmark that calls Run at
 // least once will not be measured itself and will be called once with N=1.
-//
-// Run may be called simultaneously from multiple goroutines, but all such
-// calls must return before the outer benchmark function for b returns.
 func (b *B) Run(name string, f func(b *B)) bool {
 	// Since b has subbenchmarks, we will no longer run it as a benchmark itself.
 	// Release the lock and acquire it on exit to ensure locks stay paired.
@@ -492,14 +489,17 @@ func (b *B) Run(name string, f func(b *B)) bool {
 	if !ok {
 		return true
 	}
+	var pc [maxStackLen]uintptr
+	n := runtime.Callers(2, pc[:])
 	sub := &B{
 		common: common{
-			signal: make(chan bool),
-			name:   benchName,
-			parent: &b.common,
-			level:  b.level + 1,
-			w:      b.w,
-			chatty: b.chatty,
+			signal:  make(chan bool),
+			name:    benchName,
+			parent:  &b.common,
+			level:   b.level + 1,
+			creator: pc[:n],
+			w:       b.w,
+			chatty:  b.chatty,
 		},
 		importPath: b.importPath,
 		benchFunc:  f,

@@ -27,6 +27,9 @@ var respExcludeHeader = map[string]bool{
 
 // Response represents the response from an HTTP request.
 //
+// The Client and Transport return Responses from servers once
+// the response headers have been received. The response body
+// is streamed on demand as the Body field is read.
 type Response struct {
 	Status     string // e.g. "200 OK"
 	StatusCode int    // e.g. 200
@@ -36,7 +39,7 @@ type Response struct {
 
 	// Header maps header keys to values. If the response had multiple
 	// headers with the same key, they may be concatenated, with comma
-	// delimiters.  (Section 4.2 of RFC 2616 requires that multiple headers
+	// delimiters.  (RFC 7230, section 3.2.2 requires that multiple headers
 	// be semantically equivalent to a comma-delimited sequence.) When
 	// Header values are duplicated by other fields in this struct (e.g.,
 	// ContentLength, TransferEncoding, Trailer), the field values are
@@ -47,13 +50,16 @@ type Response struct {
 
 	// Body represents the response body.
 	//
+	// The response body is streamed on demand as the Body field
+	// is read. If the network connection fails or the server
+	// terminates the response, Body.Read calls return an error.
+	//
 	// The http Client and Transport guarantee that Body is always
 	// non-nil, even on responses without a body or responses with
 	// a zero-length body. It is the caller's responsibility to
-	// close Body. The default HTTP client's Transport does not
-	// attempt to reuse HTTP/1.0 or HTTP/1.1 TCP connections
-	// ("keep-alive") unless the Body is read to completion and is
-	// closed.
+	// close Body. The default HTTP client's Transport may not
+	// reuse HTTP/1.x "keep-alive" TCP connections if the Body is
+	// not read to completion and closed.
 	//
 	// The Body is automatically dechunked if the server replied
 	// with a "chunked" Transfer-Encoding.
@@ -195,7 +201,7 @@ func ReadResponse(r *bufio.Reader, req *Request) (*Response, error) {
 	return resp, nil
 }
 
-// RFC 2616: Should treat
+// RFC 7234, section 5.4: Should treat
 //	Pragma: no-cache
 // like
 //	Cache-Control: no-cache

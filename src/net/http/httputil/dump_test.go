@@ -213,7 +213,6 @@ func TestDumpRequest(t *testing.T) {
 				t.Fatalf("Test %d: unsupported Body of %T", i, tt.Body)
 			}
 		}
-		setBody()
 		if tt.Req.Header == nil {
 			tt.Req.Header = make(http.Header)
 		}

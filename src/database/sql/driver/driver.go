@@ -15,7 +15,8 @@ import (
 )
 
 // Value is a value that drivers must be able to handle.
-// It is either nil or an instance of one of these types:
+// It is either nil, a type handled by a database driver's NamedValueChecker
+// interface, or an instance of one of these types:
 //
 //   int64
 //   float64
@@ -42,6 +43,10 @@ type NamedValue struct {
 
 // Driver is the interface that must be implemented by a database
 // driver.
+//
+// Database drivers may implement DriverContext for access
+// to contexts and to parse the name only once for a pool of connections,
+// instead of once per connection.
 type Driver interface {
 	// Open returns a new connection to the database.
 	// The name is a string in a driver-specific format.
@@ -55,20 +60,27 @@ type Driver interface {
 	Open(name string) (Conn, error)
 }
 
-// DriverContext enhances the Driver interface by returning a Connector
-// rather then a single Conn.
-// It separates out the name parsing step from actually connecting to the
-// database. It also gives dialers access to the context by using the
-// Connector.
+// If a Driver implements DriverContext, then sql.DB will call
+// OpenConnector to obtain a Connector and then invoke
+// that Connector's Conn method to obtain each needed connection,
+// instead of invoking the Driver's Open method for each connection.
+// The two-step sequence allows drivers to parse the name just once
+// and also provides access to per-Conn contexts.
 type DriverContext interface {
 	// OpenConnector must parse the name in the same format that Driver.Open
 	// parses the name parameter.
 	OpenConnector(name string) (Connector, error)
 }
 
-// Connector is an optional interface that drivers can implement.
-// It allows drivers to provide more flexible methods to open
-// database connections without requiring the use of a DSN string.
+// A Connector represents a driver in a fixed configuration
+// and can create any number of equivalent Conns for use
+// by multiple goroutines.
+//
+// A Connector can be passed to sql.OpenDB, to allow drivers
+// to implement their own sql.DB constructors, or returned by
+// DriverContext's OpenConnector method, to allow drivers
+// access to context and to avoid repeated parsing of driver
+// configuration.
 type Connector interface {
 	// Connect returns a connection to the database.
 	// Connect may return a cached connection (one previously
@@ -367,6 +379,10 @@ type Rows interface {
 	// size as the Columns() are wide.
 	//
 	// Next should return io.EOF when there are no more rows.
+	//
+	// The dest should not be written to outside of Next. Care
+	// should be taken when closing Rows not to modify
+	// a buffer held in dest.
 	Next(dest []Value) error
 }
 

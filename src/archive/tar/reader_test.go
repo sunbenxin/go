@@ -189,7 +189,7 @@ func TestReader(t *testing.T) {
 			Gid:      5000,
 			Size:     5,
 			ModTime:  time.Unix(1244593104, 0),
-			Typeflag: '\x00',
+			Typeflag: '0',
 		}, {
 			Name:     "small2.txt",
 			Mode:     0444,
@@ -197,7 +197,7 @@ func TestReader(t *testing.T) {
 			Gid:      5000,
 			Size:     11,
 			ModTime:  time.Unix(1244593104, 0),
-			Typeflag: '\x00',
+			Typeflag: '0',
 		}},
 	}, {
 		file: "testdata/pax.tar",
@@ -285,6 +285,7 @@ func TestReader(t *testing.T) {
 		file: "testdata/pax-global-records.tar",
 		headers: []*Header{{
 			Typeflag:   TypeXGlobalHeader,
+			Name:       "global1",
 			PAXRecords: map[string]string{"path": "global1", "mtime": "1500000000.0"},
 			Format:     FormatPAX,
 		}, {
@@ -300,6 +301,7 @@ func TestReader(t *testing.T) {
 			Format:     FormatPAX,
 		}, {
 			Typeflag:   TypeXGlobalHeader,
+			Name:       "GlobalHead.0.0",
 			PAXRecords: map[string]string{"path": ""},
 			Format:     FormatPAX,
 		}, {
@@ -376,9 +378,9 @@ func TestReader(t *testing.T) {
 				"security.selinux": "unconfined_u:object_r:default_t:s0\x00",
 			},
 			PAXRecords: map[string]string{
-				"mtime": "1386065770.449252304",
-				"atime": "1389782991.41987522",
-				"ctime": "1386065770.449252304",
+				"mtime":                         "1386065770.449252304",
+				"atime":                         "1389782991.41987522",
+				"ctime":                         "1386065770.449252304",
 				"SCHILY.xattr.security.selinux": "unconfined_u:object_r:default_t:s0\x00",
 			},
 			Format: FormatPAX,
@@ -532,9 +534,10 @@ func TestReader(t *testing.T) {
 		// a buggy pre-Go1.8 tar.Writer.
 		file: "testdata/invalid-go17.tar",
 		headers: []*Header{{
-			Name:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/foo",
-			Uid:     010000000,
-			ModTime: time.Unix(0, 0),
+			Name:     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/foo",
+			Uid:      010000000,
+			ModTime:  time.Unix(0, 0),
+			Typeflag: '0',
 		}},
 	}, {
 		// USTAR archive with a regular entry with non-zero device numbers.

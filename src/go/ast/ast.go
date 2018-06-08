@@ -264,10 +264,11 @@ type (
 
 	// A CompositeLit node represents a composite literal.
 	CompositeLit struct {
-		Type   Expr      // literal type; or nil
-		Lbrace token.Pos // position of "{"
-		Elts   []Expr    // list of composite elements; or nil
-		Rbrace token.Pos // position of "}"
+		Type       Expr      // literal type; or nil
+		Lbrace     token.Pos // position of "{"
+		Elts       []Expr    // list of composite elements; or nil
+		Rbrace     token.Pos // position of "}"
+		Incomplete bool      // true if (source) expressions are missing in the Elts list
 	}
 
 	// A ParenExpr node represents a parenthesized expression.
@@ -356,8 +357,8 @@ type (
 	}
 )
 
-// The direction of a channel type is indicated by one
-// of the following constants.
+// The direction of a channel type is indicated by a bit
+// mask including one or both of the following constants.
 //
 type ChanDir int
 

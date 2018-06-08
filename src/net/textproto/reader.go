@@ -236,7 +236,7 @@ func (r *Reader) ReadCodeLine(expectCode int) (code int, message string, err err
 // with the same code followed by a space. Each line in message is
 // separated by a newline (\n).
 //
-// See page 36 of RFC 959 (http://www.ietf.org/rfc/rfc959.txt) for
+// See page 36 of RFC 959 (https://www.ietf.org/rfc/rfc959.txt) for
 // details of another form of response accepted:
 //
 //  code-message line 1
@@ -477,11 +477,13 @@ func (r *Reader) ReadMIMEHeader() (MIMEHeader, error) {
 
 	m := make(MIMEHeader, hint)
 
-	for r.skipSpace() > 0 {
+	// The first line cannot start with a leading space.
+	if buf, err := r.R.Peek(1); err == nil && (buf[0] == ' ' || buf[0] == '\t') {
 		line, err := r.readLineSlice()
-		if len(line) == 0 || err != nil {
+		if err != nil {
 			return m, err
 		}
+		return m, ProtocolError("malformed MIME header initial line: " + string(line))
 	}
 
 	for {
@@ -490,9 +492,9 @@ func (r *Reader) ReadMIMEHeader() (MIMEHeader, error) {
 			return m, err
 		}
 
-		// Key ends at first colon; should not have spaces but
-		// they appear in the wild, violating specs, so we
-		// remove them if present.
+		// Key ends at first colon; should not have trailing spaces
+		// but they appear in the wild, violating specs, so we remove
+		// them if present.
 		i := bytes.IndexByte(kv, ':')
 		if i < 0 {
 			return m, ProtocolError("malformed MIME header line: " + string(kv))

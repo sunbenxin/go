@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -54,7 +55,7 @@ type converter struct {
 	start    time.Time  // time converter started
 	testName string     // name of current test, for output attribution
 	report   []*event   // pending test result reports (nested for subtests)
-	passed   bool       // whether we've seen the final whole-package PASS line
+	result   string     // overall test result if seen
 	input    lineBuffer // input buffer
 	output   lineBuffer // output buffer
 }
@@ -139,9 +140,14 @@ var (
 	reports = [][]byte{
 		[]byte("--- PASS: "),
 		[]byte("--- FAIL: "),
+		[]byte("--- SKIP: "),
+		[]byte("--- BENCH: "),
 	}
 
 	fourSpace = []byte("    ")
+
+	skipLinePrefix = []byte("?   \t")
+	skipLineSuffix = []byte(" [no test files]\n")
 )
 
 // handleInputLine handles a single whole test output line.
@@ -152,13 +158,24 @@ func (c *converter) handleInputLine(line []byte) {
 	if bytes.Equal(line, bigPass) || bytes.Equal(line, bigFail) {
 		c.flushReport(0)
 		c.output.write(line)
-		c.passed = bytes.Equal(line, bigPass)
+		if bytes.Equal(line, bigPass) {
+			c.result = "pass"
+		} else {
+			c.result = "fail"
+		}
 		return
+	}
+
+	// Special case for entirely skipped test binary: "?   \tpkgname\t0.001s [no test files]\n" is only line.
+	// Report it as plain output but remember to say skip in the final summary.
+	if bytes.HasPrefix(line, skipLinePrefix) && bytes.HasSuffix(line, skipLineSuffix) && len(c.report) == 0 {
+		c.result = "skip"
 	}
 
 	// "=== RUN   "
 	// "=== PAUSE "
 	// "=== CONT  "
+	actionColon := false
 	origLine := line
 	ok := false
 	indent := 0
@@ -171,6 +188,8 @@ func (c *converter) handleInputLine(line []byte) {
 	if !ok {
 		// "--- PASS: "
 		// "--- FAIL: "
+		// "--- SKIP: "
+		// "--- BENCH: "
 		// but possibly indented.
 		for bytes.HasPrefix(line, fourSpace) {
 			line = line[4:]
@@ -178,6 +197,7 @@ func (c *converter) handleInputLine(line []byte) {
 		}
 		for _, magic := range reports {
 			if bytes.HasPrefix(line, magic) {
+				actionColon = true
 				ok = true
 				break
 			}
@@ -191,8 +211,15 @@ func (c *converter) handleInputLine(line []byte) {
 	}
 
 	// Parse out action and test name.
-	action := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(string(line[4:4+6])), ":"))
-	name := strings.TrimSpace(string(line[4+6:]))
+	i := 0
+	if actionColon {
+		i = bytes.IndexByte(line, ':') + 1
+	}
+	if i == 0 {
+		i = len(updates[0])
+	}
+	action := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(string(line[4:i])), ":"))
+	name := strings.TrimSpace(string(line[i:]))
 
 	e := &event{Action: action}
 	if line[0] == '-' { // PASS or FAIL report
@@ -211,6 +238,7 @@ func (c *converter) handleInputLine(line []byte) {
 		if len(c.report) < indent {
 			// Nested deeper than expected.
 			// Treat this line as plain output.
+			c.output.write(origLine)
 			return
 		}
 		// Flush reports at this indentation level or deeper.
@@ -257,8 +285,8 @@ func (c *converter) Close() error {
 	c.input.flush()
 	c.output.flush()
 	e := &event{Action: "fail"}
-	if c.passed {
-		e.Action = "pass"
+	if c.result != "" {
+		e.Action = c.result
 	}
 	if c.mode&Timestamp != 0 {
 		dt := time.Since(c.start).Round(1 * time.Millisecond).Seconds()
@@ -327,6 +355,15 @@ func (l *lineBuffer) write(b []byte) {
 		for i < len(l.b) {
 			j := bytes.IndexByte(l.b[i:], '\n')
 			if j < 0 {
+				if !l.mid {
+					if j := bytes.IndexByte(l.b[i:], '\t'); j >= 0 {
+						if isBenchmarkName(bytes.TrimRight(l.b[i:i+j], " ")) {
+							l.part(l.b[i : i+j+1])
+							l.mid = true
+							i += j + 1
+						}
+					}
+				}
 				break
 			}
 			e := i + j + 1
@@ -366,6 +403,21 @@ func (l *lineBuffer) flush() {
 		l.part(l.b)
 		l.b = l.b[:0]
 	}
+}
+
+var benchmark = []byte("Benchmark")
+
+// isBenchmarkName reports whether b is a valid benchmark name
+// that might appear as the first field in a benchmark result line.
+func isBenchmarkName(b []byte) bool {
+	if !bytes.HasPrefix(b, benchmark) {
+		return false
+	}
+	if len(b) == len(benchmark) { // just "Benchmark"
+		return true
+	}
+	r, _ := utf8.DecodeRune(b[len(benchmark):])
+	return !unicode.IsLower(r)
 }
 
 // trimUTF8 returns a length t as close to len(b) as possible such that b[:t]

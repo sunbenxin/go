@@ -138,13 +138,16 @@ import (
 //			offset = second register
 //
 //	[reg, reg, reg-reg]
-//		Register list for ARM and ARM64.
+//		Register list for ARM, ARM64, 386/AMD64.
 //		Encoding:
 //			type = TYPE_REGLIST
 //		On ARM:
 //			offset = bit mask of registers in list; R0 is low bit.
 //		On ARM64:
 //			offset = register count (Q:size) | arrangement (opcode) | first register
+//		On 386/AMD64:
+//			reg = range low register
+//			offset = 2 packed registers + kind tag (see x86.EncodeRegisterRange)
 //
 //	reg, reg
 //		Register pair for ARM.
@@ -208,7 +211,12 @@ const (
 	// A reference to name@GOT(SB) is a reference to the entry in the global offset
 	// table for 'name'.
 	NAME_GOTREF
+	// Indicates auto that was optimized away, but whose type
+	// we want to preserve in the DWARF debug info.
+	NAME_DELETED_AUTO
 )
+
+//go:generate stringer -type AddrType
 
 type AddrType uint8
 
@@ -277,7 +285,7 @@ type Prog struct {
 	RegTo2   int16    // 2nd destination operand
 	Mark     uint16   // bitmask of arch-specific items
 	Optab    uint16   // arch-specific opcode index
-	Scond    uint8    // condition bits for conditional instruction (e.g., on ARM)
+	Scond    uint8    // bits that describe instruction suffixes (e.g. ARM conditions)
 	Back     uint8    // for x86 back end: backwards branch state
 	Ft       uint8    // for x86 back end: type index of Prog.From
 	Tt       uint8    // for x86 back end: type index of Prog.To
@@ -338,6 +346,7 @@ const (
 	ANOP
 	APCDATA
 	ARET
+	AGETCALLERPC
 	ATEXT
 	AUNDEF
 	A_ARCHSPECIFIC
@@ -358,6 +367,7 @@ const (
 	ABaseARM64
 	ABaseMIPS
 	ABaseS390X
+	ABaseWasm
 
 	AllowedOpCodes = 1 << 11            // The number of opcodes available for any given architecture.
 	AMask          = AllowedOpCodes - 1 // AND with this to use the opcode as an array index.
@@ -389,9 +399,12 @@ type FuncInfo struct {
 	dwarfInfoSym   *LSym
 	dwarfLocSym    *LSym
 	dwarfRangesSym *LSym
+	dwarfAbsFnSym  *LSym
+	dwarfIsStmtSym *LSym
 
 	GCArgs   LSym
 	GCLocals LSym
+	GCRegs   LSym
 }
 
 // Attribute is a set of symbol attributes.
@@ -427,6 +440,10 @@ const (
 	// definition. (When not compiling to support Go shared libraries, all symbols are
 	// local in this sense unless there is a cgo_export_* directive).
 	AttrLocal
+
+	// For function symbols; indicates that the specified function was the
+	// target of an inline during compilation
+	AttrWasInlined
 )
 
 func (a Attribute) DuplicateOK() bool   { return a&AttrDuplicateOK != 0 }
@@ -442,6 +459,7 @@ func (a Attribute) Wrapper() bool       { return a&AttrWrapper != 0 }
 func (a Attribute) NeedCtxt() bool      { return a&AttrNeedCtxt != 0 }
 func (a Attribute) NoFrame() bool       { return a&AttrNoFrame != 0 }
 func (a Attribute) Static() bool        { return a&AttrStatic != 0 }
+func (a Attribute) WasInlined() bool    { return a&AttrWasInlined != 0 }
 
 func (a *Attribute) Set(flag Attribute, value bool) {
 	if value {
@@ -468,6 +486,7 @@ var textAttrStrings = [...]struct {
 	{bit: AttrNeedCtxt, s: "NEEDCTXT"},
 	{bit: AttrNoFrame, s: "NOFRAME"},
 	{bit: AttrStatic, s: "STATIC"},
+	{bit: AttrWasInlined, s: ""},
 }
 
 // TextAttrString formats a for printing in as part of a TEXT prog.
@@ -549,12 +568,15 @@ type Link struct {
 	statichash         map[string]*LSym // name -> sym mapping for static syms
 	PosTable           src.PosTable
 	InlTree            InlTree // global inlining tree used by gc/inl.go
+	DwFixups           *DwarfFixupTable
 	Imports            []string
 	DiagFunc           func(string, ...interface{})
 	DiagFlush          func()
-	DebugInfo          func(fn *LSym, curfn interface{}) []dwarf.Scope // if non-nil, curfn is a *gc.Node
+	DebugInfo          func(fn *LSym, curfn interface{}) ([]dwarf.Scope, dwarf.InlCalls) // if non-nil, curfn is a *gc.Node
+	GenAbstractFunc    func(fn *LSym)
 	Errors             int
 
+	InParallel           bool // parallel backend phase in effect
 	Framepointer_enabled bool
 
 	// state for writing objects
@@ -578,7 +600,7 @@ func (ctxt *Link) Logf(format string, args ...interface{}) {
 // the hardware stack pointer and the local variable area.
 func (ctxt *Link) FixedFrameSize() int64 {
 	switch ctxt.Arch.Family {
-	case sys.AMD64, sys.I386:
+	case sys.AMD64, sys.I386, sys.Wasm:
 		return 0
 	case sys.PPC64:
 		// PIC code on ppc64le requires 32 bytes of stack, and it's easier to

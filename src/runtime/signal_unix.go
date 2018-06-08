@@ -103,6 +103,8 @@ func initsig(preinit bool) {
 			// set SA_ONSTACK if necessary.
 			if fwdSig[i] != _SIG_DFL && fwdSig[i] != _SIG_IGN {
 				setsigstack(i)
+			} else if fwdSig[i] == _SIG_IGN {
+				sigInitIgnored(i)
 			}
 			continue
 		}
@@ -275,6 +277,12 @@ func sigpipe() {
 // sigtrampgo is called from the signal handler function, sigtramp,
 // written in assembly code.
 // This is called by the signal handler, and the world may be stopped.
+//
+// It must be nosplit because getg() is still the G that was running
+// (if any) when the signal was delivered, but it's (usually) called
+// on the gsignal stack. Until this switches the G to gsignal, the
+// stack bounds check won't work.
+//
 //go:nosplit
 //go:nowritebarrierrec
 func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
@@ -308,7 +316,7 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 			st := stackt{ss_size: g.m.g0.stack.hi - g.m.g0.stack.lo}
 			setSignalstackSP(&st, g.m.g0.stack.lo)
 			setGsignalStack(&st, &gsignalStack)
-			g.m.gsignal.stktopsp = getcallersp(unsafe.Pointer(&sig))
+			g.m.gsignal.stktopsp = getcallersp()
 			setStack = true
 		} else {
 			var st stackt
@@ -327,7 +335,7 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 				dropm()
 			}
 			setGsignalStack(&st, &gsignalStack)
-			g.m.gsignal.stktopsp = getcallersp(unsafe.Pointer(&sig))
+			g.m.gsignal.stktopsp = getcallersp()
 			setStack = true
 		}
 	}
@@ -354,6 +362,12 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 // the signal handler. The effect is that the program will act as
 // though the function that got the signal simply called sigpanic
 // instead.
+//
+// This must NOT be nosplit because the linker doesn't know where
+// sigpanic calls can be injected.
+//
+// The signal handler must not inject a call to sigpanic if
+// getg().throwsplit, since sigpanic may need to grow the stack.
 func sigpanic() {
 	g := getg()
 	if !canpanic(g) {
@@ -464,7 +478,10 @@ func raisebadsignal(sig uint32, c *sigctxt) {
 	// re-installing sighandler. At this point we can just
 	// return and the signal will be re-raised and caught by
 	// the default handler with the correct context.
-	if (isarchive || islibrary) && handler == _SIG_DFL && c.sigcode() != _SI_USER {
+	//
+	// On FreeBSD, the libthr sigaction code prevents
+	// this from working so we fall through to raise.
+	if GOOS != "freebsd" && (isarchive || islibrary) && handler == _SIG_DFL && c.sigcode() != _SI_USER {
 		return
 	}
 
@@ -484,6 +501,7 @@ func raisebadsignal(sig uint32, c *sigctxt) {
 	setsig(sig, funcPC(sighandler))
 }
 
+//go:nosplit
 func crash() {
 	if GOOS == "darwin" {
 		// OS X core dumps are linear dumps of the mapped memory,
@@ -520,7 +538,7 @@ func ensureSigM() {
 		// mask accordingly.
 		sigBlocked := sigset_all
 		for i := range sigtable {
-			if sigtable[i].flags&_SigUnblock != 0 {
+			if !blockableSig(uint32(i)) {
 				sigdelset(&sigBlocked, i)
 			}
 		}
@@ -532,7 +550,7 @@ func ensureSigM() {
 					sigdelset(&sigBlocked, int(sig))
 				}
 			case sig := <-disableSigChan:
-				if sig > 0 {
+				if sig > 0 && blockableSig(sig) {
 					sigaddset(&sigBlocked, int(sig))
 				}
 			}
@@ -714,7 +732,7 @@ func minitSignalStack() {
 		signalstack(&_g_.m.gsignal.stack)
 		_g_.m.newSigstack = true
 	} else {
-		setGsignalStack(&st, nil)
+		setGsignalStack(&st, &_g_.m.goSigStack)
 		_g_.m.newSigstack = false
 	}
 }
@@ -730,7 +748,7 @@ func minitSignalStack() {
 func minitSignalMask() {
 	nmask := getg().m.sigmask
 	for i := range sigtable {
-		if sigtable[i].flags&_SigUnblock != 0 {
+		if !blockableSig(uint32(i)) {
 			sigdelset(&nmask, i)
 		}
 	}
@@ -745,10 +763,33 @@ func unminitSignals() {
 		st := stackt{ss_flags: _SS_DISABLE}
 		sigaltstack(&st, nil)
 	} else {
-		// We got the signal stack from someone else. Clear it
-		// so we don't get confused.
-		getg().m.gsignal.stack = stack{}
+		// We got the signal stack from someone else. Restore
+		// the Go-allocated stack in case this M gets reused
+		// for another thread (e.g., it's an extram). Also, on
+		// Android, libc allocates a signal stack for all
+		// threads, so it's important to restore the Go stack
+		// even on Go-created threads so we can free it.
+		restoreGsignalStack(&getg().m.goSigStack)
 	}
+}
+
+// blockableSig returns whether sig may be blocked by the signal mask.
+// We never want to block the signals marked _SigUnblock;
+// these are the synchronous signals that turn into a Go panic.
+// In a Go program--not a c-archive/c-shared--we never want to block
+// the signals marked _SigKill or _SigThrow, as otherwise it's possible
+// for all running threads to block them and delay their delivery until
+// we start a new thread. When linked into a C program we let the C code
+// decide on the disposition of those signals.
+func blockableSig(sig uint32) bool {
+	flags := sigtable[sig].flags
+	if flags&_SigUnblock != 0 {
+		return false
+	}
+	if isarchive || islibrary {
+		return true
+	}
+	return flags&(_SigKill|_SigThrow) == 0
 }
 
 // gsignalStack saves the fields of the gsignal stack changed by

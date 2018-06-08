@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -22,8 +23,11 @@ var coverMerge struct {
 // Using this function clears the profile in case it existed from a previous run,
 // or in case it doesn't exist and the test is going to fail to create it (or not run).
 func initCoverProfile() {
-	if testCoverProfile == "" {
+	if testCoverProfile == "" || testC {
 		return
+	}
+	if !filepath.IsAbs(testCoverProfile) && testOutputDir != "" {
+		testCoverProfile = filepath.Join(testOutputDir, testCoverProfile)
 	}
 
 	// No mutex - caller's responsibility to call with no racing goroutines.

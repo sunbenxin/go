@@ -170,6 +170,14 @@ var typeTests = []pair{
 	}{},
 		"interface { reflect_test.a(func(func(int) int) func(func(int)) int); reflect_test.b() }",
 	},
+	{struct {
+		x struct {
+			int32
+			int64
+		}
+	}{},
+		"struct { int32; int64 }",
+	},
 }
 
 var valueTests = []pair{
@@ -1631,6 +1639,15 @@ func TestFunc(t *testing.T) {
 	}
 }
 
+func TestCallConvert(t *testing.T) {
+	v := ValueOf(new(io.ReadWriter)).Elem()
+	f := ValueOf(func(r io.Reader) io.Reader { return r })
+	out := f.Call([]Value{v})
+	if len(out) != 1 || out[0].Type() != TypeOf(new(io.Reader)).Elem() || !out[0].IsNil() {
+		t.Errorf("expected [nil], got %v", out)
+	}
+}
+
 type emptyStruct struct{}
 
 type nonEmptyStruct struct {
@@ -2516,9 +2533,9 @@ func TestFieldPkgPath(t *testing.T) {
 	}{})
 
 	type pkgpathTest struct {
-		index     []int
-		pkgPath   string
-		anonymous bool
+		index    []int
+		pkgPath  string
+		embedded bool
 	}
 
 	checkPkgPath := func(name string, s []pkgpathTest) {
@@ -2527,7 +2544,7 @@ func TestFieldPkgPath(t *testing.T) {
 			if got, want := f.PkgPath, test.pkgPath; got != want {
 				t.Errorf("%s: Field(%d).PkgPath = %q, want %q", name, test.index, got, want)
 			}
-			if got, want := f.Anonymous, test.anonymous; got != want {
+			if got, want := f.Anonymous, test.embedded; got != want {
 				t.Errorf("%s: Field(%d).Anonymous = %v, want %v", name, test.index, got, want)
 			}
 		}
@@ -3901,8 +3918,8 @@ func TestOverflow(t *testing.T) {
 	}
 }
 
-func checkSameType(t *testing.T, x, y interface{}) {
-	if TypeOf(x) != TypeOf(y) {
+func checkSameType(t *testing.T, x Type, y interface{}) {
+	if x != TypeOf(y) || TypeOf(Zero(x).Interface()) != TypeOf(y) {
 		t.Errorf("did not find preexisting type for %s (vs %s)", TypeOf(x), TypeOf(y))
 	}
 }
@@ -4031,7 +4048,7 @@ func TestArrayOf(t *testing.T) {
 
 	// check that type already in binary is found
 	type T int
-	checkSameType(t, Zero(ArrayOf(5, TypeOf(T(1)))).Interface(), [5]T{})
+	checkSameType(t, ArrayOf(5, TypeOf(T(1))), [5]T{})
 }
 
 func TestArrayOfGC(t *testing.T) {
@@ -4167,7 +4184,7 @@ func TestSliceOf(t *testing.T) {
 
 	// check that type already in binary is found
 	type T1 int
-	checkSameType(t, Zero(SliceOf(TypeOf(T1(1)))).Interface(), []T1{})
+	checkSameType(t, SliceOf(TypeOf(T1(1))), []T1{})
 }
 
 func TestSliceOverflow(t *testing.T) {
@@ -4381,7 +4398,18 @@ func TestStructOf(t *testing.T) {
 		})
 	})
 	// check that type already in binary is found
-	checkSameType(t, Zero(StructOf(fields[2:3])).Interface(), struct{ Y uint64 }{})
+	checkSameType(t, StructOf(fields[2:3]), struct{ Y uint64 }{})
+
+	// gccgo used to fail this test.
+	type structFieldType interface{}
+	checkSameType(t,
+		StructOf([]StructField{
+			StructField{
+				Name: "F",
+				Type: TypeOf((*structFieldType)(nil)).Elem(),
+			},
+		}),
+		struct{ F structFieldType }{})
 }
 
 func TestStructOfExportRules(t *testing.T) {
@@ -4857,7 +4885,7 @@ func TestStructOfWithInterface(t *testing.T) {
 			})
 
 			// We currently do not correctly implement methods
-			// for anonymous fields other than the first.
+			// for embedded fields other than the first.
 			// Therefore, for now, we expect those methods
 			// to not exist.  See issues 15924 and 20824.
 			// When those issues are fixed, this test of panic
@@ -4926,7 +4954,7 @@ func TestChanOf(t *testing.T) {
 
 	// check that type already in binary is found
 	type T1 int
-	checkSameType(t, Zero(ChanOf(BothDir, TypeOf(T1(1)))).Interface(), (chan T1)(nil))
+	checkSameType(t, ChanOf(BothDir, TypeOf(T1(1))), (chan T1)(nil))
 }
 
 func TestChanOfDir(t *testing.T) {
@@ -4937,8 +4965,8 @@ func TestChanOfDir(t *testing.T) {
 
 	// check that type already in binary is found
 	type T1 int
-	checkSameType(t, Zero(ChanOf(RecvDir, TypeOf(T1(1)))).Interface(), (<-chan T1)(nil))
-	checkSameType(t, Zero(ChanOf(SendDir, TypeOf(T1(1)))).Interface(), (chan<- T1)(nil))
+	checkSameType(t, ChanOf(RecvDir, TypeOf(T1(1))), (<-chan T1)(nil))
+	checkSameType(t, ChanOf(SendDir, TypeOf(T1(1))), (chan<- T1)(nil))
 
 	// check String form of ChanDir
 	if crt.ChanDir().String() != "<-chan" {
@@ -5014,7 +5042,7 @@ func TestMapOf(t *testing.T) {
 	}
 
 	// check that type already in binary is found
-	checkSameType(t, Zero(MapOf(TypeOf(V(0)), TypeOf(K("")))).Interface(), map[V]K(nil))
+	checkSameType(t, MapOf(TypeOf(V(0)), TypeOf(K(""))), map[V]K(nil))
 
 	// check that invalid key type panics
 	shouldPanic(func() { MapOf(TypeOf((func())(nil)), TypeOf(false)) })
@@ -5144,7 +5172,7 @@ func TestFuncOf(t *testing.T) {
 		{in: []Type{TypeOf(int(0))}, out: []Type{TypeOf(false), TypeOf("")}, want: (func(int) (bool, string))(nil)},
 	}
 	for _, tt := range testCases {
-		checkSameType(t, Zero(FuncOf(tt.in, tt.out, tt.variadic)).Interface(), tt.want)
+		checkSameType(t, FuncOf(tt.in, tt.out, tt.variadic), tt.want)
 	}
 
 	// check that variadic requires last element be a slice.

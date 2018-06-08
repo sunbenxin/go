@@ -226,6 +226,14 @@ func (p *parser) parseField(pkg *types.Package) (field *types.Var, tag string) {
 // Param = Name ["..."] Type .
 func (p *parser) parseParam(pkg *types.Package) (param *types.Var, isVariadic bool) {
 	name := p.parseName()
+	if p.tok == '<' && p.scanner.Peek() == 'e' {
+		// EscInfo = "<esc:" int ">" . (optional and ignored)
+		p.next()
+		p.expectKeyword("esc")
+		p.expect(':')
+		p.expect(scanner.Int)
+		p.expect('>')
+	}
 	if p.tok == '.' {
 		p.next()
 		p.expect('.')
@@ -577,13 +585,13 @@ func (p *parser) parseInterfaceType(pkg *types.Package) types.Type {
 	p.expectKeyword("interface")
 
 	var methods []*types.Func
-	var typs []*types.Named
+	var embeddeds []types.Type
 
 	p.expect('{')
 	for p.tok != '}' && p.tok != scanner.EOF {
 		if p.tok == '?' {
 			p.next()
-			typs = append(typs, p.parseType(pkg).(*types.Named))
+			embeddeds = append(embeddeds, p.parseType(pkg))
 		} else {
 			method := p.parseFunc(pkg)
 			methods = append(methods, method)
@@ -592,7 +600,7 @@ func (p *parser) parseInterfaceType(pkg *types.Package) types.Type {
 	}
 	p.expect('}')
 
-	return types.NewInterface(methods, typs)
+	return types.NewInterface2(methods, embeddeds)
 }
 
 // PointerType = "*" ("any" | Type) .

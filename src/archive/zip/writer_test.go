@@ -6,6 +6,7 @@ package zip
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -106,7 +107,16 @@ func TestWriterComment(t *testing.T) {
 		// write a zip file
 		buf := new(bytes.Buffer)
 		w := NewWriter(buf)
-		w.Comment = test.comment
+		if err := w.SetComment(test.comment); err != nil {
+			if test.ok {
+				t.Fatalf("SetComment: unexpected error %v", err)
+			}
+			continue
+		} else {
+			if !test.ok {
+				t.Fatalf("SetComment: unexpected success, want error")
+			}
+		}
 
 		if err := w.Close(); test.ok == (err != nil) {
 			t.Fatal(err)
@@ -290,6 +300,52 @@ func TestWriterFlush(t *testing.T) {
 	}
 }
 
+func TestWriterDir(t *testing.T) {
+	w := NewWriter(ioutil.Discard)
+	dw, err := w.Create("dir/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dw.Write([]byte("hello")); err == nil {
+		t.Error("Write to directory: got nil error, want non-nil")
+	}
+}
+
+func TestWriterDirAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if _, err := w.Create("dir/"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	b := buf.Bytes()
+
+	var sig [4]byte
+	binary.LittleEndian.PutUint32(sig[:], uint32(fileHeaderSignature))
+
+	idx := bytes.Index(b, sig[:])
+	if idx == -1 {
+		t.Fatal("file header not found")
+	}
+	b = b[idx:]
+
+	if !bytes.Equal(b[6:10], []byte{0, 0, 0, 0}) { // FileHeader.Flags: 0, FileHeader.Method: 0
+		t.Errorf("unexpected method and flags: %v", b[6:10])
+	}
+
+	if !bytes.Equal(b[14:26], make([]byte, 12)) { // FileHeader.{CRC32,CompressSize,UncompressedSize} all zero.
+		t.Errorf("unexpected crc, compress and uncompressed size to be 0 was: %v", b[14:26])
+	}
+
+	binary.LittleEndian.PutUint32(sig[:], uint32(dataDescriptorSignature))
+	if bytes.Index(b, sig[:]) != -1 {
+		t.Error("there should be no data descriptor")
+	}
+}
+
 func testCreate(t *testing.T, w *Writer, wt *WriteTest) {
 	header := &FileHeader{
 		Name:   wt.Name,
@@ -312,7 +368,7 @@ func testReadFile(t *testing.T, f *File, wt *WriteTest) {
 	if f.Name != wt.Name {
 		t.Fatalf("File name: got %q, want %q", f.Name, wt.Name)
 	}
-	testFileMode(t, wt.Name, f, wt.Mode)
+	testFileMode(t, f, wt.Mode)
 	rc, err := f.Open()
 	if err != nil {
 		t.Fatal("opening:", err)

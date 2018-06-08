@@ -523,10 +523,13 @@ func BenchmarkBaseMult(b *testing.B) {
 	p224 := P224()
 	e := p224BaseMultTests[25]
 	k, _ := new(big.Int).SetString(e.k, 10)
+	b.ReportAllocs()
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		p224.ScalarBaseMult(k.Bytes())
-	}
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			p224.ScalarBaseMult(k.Bytes())
+		}
+	})
 }
 
 func BenchmarkBaseMultP256(b *testing.B) {
@@ -534,10 +537,13 @@ func BenchmarkBaseMultP256(b *testing.B) {
 	p256 := P256()
 	e := p224BaseMultTests[25]
 	k, _ := new(big.Int).SetString(e.k, 10)
+	b.ReportAllocs()
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		p256.ScalarBaseMult(k.Bytes())
-	}
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			p256.ScalarBaseMult(k.Bytes())
+		}
+	})
 }
 
 func BenchmarkScalarMultP256(b *testing.B) {
@@ -546,10 +552,13 @@ func BenchmarkScalarMultP256(b *testing.B) {
 	_, x, y, _ := GenerateKey(p256, rand.Reader)
 	priv, _, _, _ := GenerateKey(p256, rand.Reader)
 
+	b.ReportAllocs()
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		p256.ScalarMult(x, y, priv)
-	}
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			p256.ScalarMult(x, y, priv)
+		}
+	})
 }
 
 func TestMarshal(t *testing.T) {
@@ -599,7 +608,7 @@ func TestUnmarshalToLargeCoordinates(t *testing.T) {
 	copy(invalidX[33:], y.Bytes())
 
 	if X, Y := Unmarshal(curve, invalidX); X != nil || Y != nil {
-		t.Errorf("Unmarshal accpets invalid X coordinate")
+		t.Errorf("Unmarshal accepts invalid X coordinate")
 	}
 
 	// This is a point on the curve with a small y value, small enough that we can add p and still be within 32 bytes.
@@ -616,6 +625,6 @@ func TestUnmarshalToLargeCoordinates(t *testing.T) {
 	copy(invalidY[33:], y.Bytes())
 
 	if X, Y := Unmarshal(curve, invalidY); X != nil || Y != nil {
-		t.Errorf("Unmarshal accpets invalid Y coordinate")
+		t.Errorf("Unmarshal accepts invalid Y coordinate")
 	}
 }

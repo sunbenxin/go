@@ -524,7 +524,7 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 					q.To.Type = obj.TYPE_MEM
 					q.To.Offset = int64(-autosize)
 					q.To.Reg = REGSP
-					q.Spadj = int32(autosize)
+					q.Spadj = autosize
 				} else {
 					// Frame size is too large for a MOVDU instruction.
 					// Store link register before decrementing SP, so if a signal comes
@@ -781,6 +781,18 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 			if p.To.Type == obj.TYPE_REG && p.To.Reg == REGSP && p.From.Type == obj.TYPE_CONST {
 				p.Spadj = int32(-p.From.Offset)
 			}
+		case obj.AGETCALLERPC:
+			if cursym.Leaf() {
+				/* MOVD LR, Rd */
+				p.As = AMOVD
+				p.From.Type = obj.TYPE_REG
+				p.From.Reg = REG_LR
+			} else {
+				/* MOVD (RSP), Rd */
+				p.As = AMOVD
+				p.From.Type = obj.TYPE_MEM
+				p.From.Reg = REGSP
+			}
 		}
 	}
 }
@@ -954,6 +966,8 @@ func (c *ctxt9) stacksplit(p *obj.Prog, framesize int32) *obj.Prog {
 		q.Pcond = p
 	}
 
+	p = c.ctxt.EmitEntryLiveness(c.cursym, p, c.newprog)
+
 	var morestacksym *obj.LSym
 	if c.cursym.CFunc() {
 		morestacksym = c.ctxt.Lookup("runtime.morestackc")
@@ -1056,17 +1070,19 @@ func (c *ctxt9) stacksplit(p *obj.Prog, framesize int32) *obj.Prog {
 }
 
 var Linkppc64 = obj.LinkArch{
-	Arch:       sys.ArchPPC64,
-	Init:       buildop,
-	Preprocess: preprocess,
-	Assemble:   span9,
-	Progedit:   progedit,
+	Arch:           sys.ArchPPC64,
+	Init:           buildop,
+	Preprocess:     preprocess,
+	Assemble:       span9,
+	Progedit:       progedit,
+	DWARFRegisters: PPC64DWARFRegisters,
 }
 
 var Linkppc64le = obj.LinkArch{
-	Arch:       sys.ArchPPC64LE,
-	Init:       buildop,
-	Preprocess: preprocess,
-	Assemble:   span9,
-	Progedit:   progedit,
+	Arch:           sys.ArchPPC64LE,
+	Init:           buildop,
+	Preprocess:     preprocess,
+	Assemble:       span9,
+	Progedit:       progedit,
+	DWARFRegisters: PPC64DWARFRegisters,
 }

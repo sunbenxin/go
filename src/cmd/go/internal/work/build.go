@@ -65,7 +65,7 @@ and test commands:
 		Supported only on linux/amd64, freebsd/amd64, darwin/amd64 and windows/amd64.
 	-msan
 		enable interoperation with memory sanitizer.
-		Supported only on linux/amd64,
+		Supported only on linux/amd64, linux/arm64
 		and only with Clang/LLVM as the host C compiler.
 	-v
 		print the names of packages as they are compiled.
@@ -229,7 +229,6 @@ func AddBuildFlags(cmd *base.Command) {
 
 	// Undocumented, unstable debugging flags.
 	cmd.Flag.StringVar(&cfg.DebugActiongraph, "debug-actiongraph", "", "")
-	cmd.Flag.Var(&load.DebugDeprecatedImportcfg, "debug-deprecated-importcfg", "")
 }
 
 // fileExtSplit expects a filename and returns the name
@@ -285,11 +284,6 @@ func runBuild(cmd *base.Command, args []string) {
 		cfg.BuildO += cfg.ExeSuffix
 	}
 
-	// Special case -o /dev/null by not writing at all.
-	if cfg.BuildO == os.DevNull {
-		cfg.BuildO = ""
-	}
-
 	// sanity check some often mis-used options
 	switch cfg.BuildContext.Compiler {
 	case "gccgo":
@@ -310,6 +304,13 @@ func runBuild(cmd *base.Command, args []string) {
 		depMode = ModeInstall
 	}
 
+	pkgs = pkgsFilter(load.Packages(args))
+
+	// Special case -o /dev/null by not writing at all.
+	if cfg.BuildO == os.DevNull {
+		cfg.BuildO = ""
+	}
+
 	if cfg.BuildO != "" {
 		if len(pkgs) > 1 {
 			base.Fatalf("go build: cannot use -o with multiple packages")
@@ -324,8 +325,6 @@ func runBuild(cmd *base.Command, args []string) {
 		b.Do(a)
 		return
 	}
-
-	pkgs = pkgsFilter(load.Packages(args))
 
 	a := &Action{Mode: "go build"}
 	for _, p := range pkgs {

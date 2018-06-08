@@ -11,6 +11,7 @@ import (
 	"hash"
 	"hash/crc32"
 	"io"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -26,13 +27,11 @@ type Writer struct {
 	last        *fileWriter
 	closed      bool
 	compressors map[uint16]Compressor
+	comment     string
 
 	// testHookCloseSizeOffset if non-nil is called with the size
 	// of offset of the central directory at Close.
 	testHookCloseSizeOffset func(size, offset uint64)
-
-	// Comment is the central directory comment and must be set before Close is called.
-	Comment string
 }
 
 type header struct {
@@ -62,13 +61,19 @@ func (w *Writer) Flush() error {
 	return w.cw.w.(*bufio.Writer).Flush()
 }
 
-// Close finishes writing the zip file by writing the central directory.
-// It does not (and cannot) close the underlying writer.
-func (w *Writer) Close() error {
-	if len(w.Comment) > uint16max {
+// SetComment sets the end-of-central-directory comment field.
+// It can only be called before Close.
+func (w *Writer) SetComment(comment string) error {
+	if len(comment) > uint16max {
 		return errors.New("zip: Writer.Comment too long")
 	}
+	w.comment = comment
+	return nil
+}
 
+// Close finishes writing the zip file by writing the central directory.
+// It does not close the underlying writer.
+func (w *Writer) Close() error {
 	if w.last != nil && !w.last.closed {
 		if err := w.last.close(); err != nil {
 			return err
@@ -189,11 +194,11 @@ func (w *Writer) Close() error {
 	b.uint16(uint16(records))        // number of entries total
 	b.uint32(uint32(size))           // size of directory
 	b.uint32(uint32(offset))         // start of directory
-	b.uint16(uint16(len(w.Comment))) // byte size of EOCD comment
+	b.uint16(uint16(len(w.comment))) // byte size of EOCD comment
 	if _, err := w.cw.Write(buf[:]); err != nil {
 		return err
 	}
-	if _, err := io.WriteString(w.cw, w.Comment); err != nil {
+	if _, err := io.WriteString(w.cw, w.comment); err != nil {
 		return err
 	}
 
@@ -205,7 +210,8 @@ func (w *Writer) Close() error {
 // The file contents will be compressed using the Deflate method.
 // The name must be a relative path: it must not start with a drive
 // letter (e.g. C:) or leading slash, and only forward slashes are
-// allowed.
+// allowed. To create a directory instead of a file, add a trailing
+// slash to the name.
 // The file's contents must be written to the io.Writer before the next
 // call to Create, CreateHeader, or Close.
 func (w *Writer) Create(name string) (io.Writer, error) {
@@ -257,8 +263,6 @@ func (w *Writer) CreateHeader(fh *FileHeader) (io.Writer, error) {
 		return nil, errors.New("archive/zip: invalid duplicate FileHeader")
 	}
 
-	fh.Flags |= 0x8 // we will write a data descriptor
-
 	// The ZIP format has a sad state of affairs regarding character encoding.
 	// Officially, the name and comment fields are supposed to be encoded
 	// in CP-437 (which is mostly compatible with ASCII), unless the UTF-8
@@ -306,7 +310,7 @@ func (w *Writer) CreateHeader(fh *FileHeader) (io.Writer, error) {
 		// This format happens to be identical for both local and central header
 		// if modification time is the only timestamp being encoded.
 		var mbuf [9]byte // 2*SizeOf(uint16) + SizeOf(uint8) + SizeOf(uint32)
-		mt := uint32(fh.ModTime().Unix())
+		mt := uint32(fh.Modified.Unix())
 		eb := writeBuf(mbuf[:])
 		eb.uint16(extTimeExtraID)
 		eb.uint16(5)  // Size: SizeOf(uint8) + SizeOf(uint32)
@@ -315,35 +319,52 @@ func (w *Writer) CreateHeader(fh *FileHeader) (io.Writer, error) {
 		fh.Extra = append(fh.Extra, mbuf[:]...)
 	}
 
-	fw := &fileWriter{
-		zipw:      w.cw,
-		compCount: &countWriter{w: w.cw},
-		crc32:     crc32.NewIEEE(),
-	}
-	comp := w.compressor(fh.Method)
-	if comp == nil {
-		return nil, ErrAlgorithm
-	}
-	var err error
-	fw.comp, err = comp(fw.compCount)
-	if err != nil {
-		return nil, err
-	}
-	fw.rawCount = &countWriter{w: fw.comp}
-
+	var (
+		ow io.Writer
+		fw *fileWriter
+	)
 	h := &header{
 		FileHeader: fh,
 		offset:     uint64(w.cw.count),
 	}
-	w.dir = append(w.dir, h)
-	fw.header = h
 
+	if strings.HasSuffix(fh.Name, "/") {
+		// Set the compression method to Store to ensure data length is truly zero,
+		// which the writeHeader method always encodes for the size fields.
+		// This is necessary as most compression formats have non-zero lengths
+		// even when compressing an empty string.
+		fh.Method = Store
+		fh.Flags &^= 0x8 // we will not write a data descriptor
+
+		ow = dirWriter{}
+	} else {
+		fh.Flags |= 0x8 // we will write a data descriptor
+
+		fw = &fileWriter{
+			zipw:      w.cw,
+			compCount: &countWriter{w: w.cw},
+			crc32:     crc32.NewIEEE(),
+		}
+		comp := w.compressor(fh.Method)
+		if comp == nil {
+			return nil, ErrAlgorithm
+		}
+		var err error
+		fw.comp, err = comp(fw.compCount)
+		if err != nil {
+			return nil, err
+		}
+		fw.rawCount = &countWriter{w: fw.comp}
+		fw.header = h
+		ow = fw
+	}
+	w.dir = append(w.dir, h)
 	if err := writeHeader(w.cw, fh); err != nil {
 		return nil, err
 	}
-
+	// If we're creating a directory, fw is nil.
 	w.last = fw
-	return fw, nil
+	return ow, nil
 }
 
 func writeHeader(w io.Writer, h *FileHeader) error {
@@ -394,6 +415,12 @@ func (w *Writer) compressor(method uint16) Compressor {
 		comp = compressor(method)
 	}
 	return comp
+}
+
+type dirWriter struct{}
+
+func (dirWriter) Write([]byte) (int, error) {
+	return 0, errors.New("zip: write to directory")
 }
 
 type fileWriter struct {

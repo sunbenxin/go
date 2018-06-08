@@ -227,7 +227,7 @@ func TestBitStringRightAlign(t *testing.T) {
 type objectIdentifierTest struct {
 	in  []byte
 	ok  bool
-	out []int
+	out ObjectIdentifier // has base type[]int
 }
 
 var objectIdentifierTestData = []objectIdentifierTest{
@@ -424,14 +424,16 @@ var parseFieldParametersTestData []parseFieldParametersTest = []parseFieldParame
 	{"generalized", fieldParameters{timeType: TagGeneralizedTime}},
 	{"utc", fieldParameters{timeType: TagUTCTime}},
 	{"printable", fieldParameters{stringType: TagPrintableString}},
+	{"numeric", fieldParameters{stringType: TagNumericString}},
 	{"optional", fieldParameters{optional: true}},
 	{"explicit", fieldParameters{explicit: true, tag: new(int)}},
 	{"application", fieldParameters{application: true, tag: new(int)}},
+	{"private", fieldParameters{private: true, tag: new(int)}},
 	{"optional,explicit", fieldParameters{optional: true, explicit: true, tag: new(int)}},
 	{"default:42", fieldParameters{defaultValue: newInt64(42)}},
 	{"tag:17", fieldParameters{tag: newInt(17)}},
 	{"optional,explicit,default:42,tag:17", fieldParameters{optional: true, explicit: true, defaultValue: newInt64(42), tag: newInt(17)}},
-	{"optional,explicit,default:42,tag:17,rubbish1", fieldParameters{true, true, false, newInt64(42), newInt(17), 0, 0, false, false}},
+	{"optional,explicit,default:42,tag:17,rubbish1", fieldParameters{optional: true, explicit: true, application: false, defaultValue: newInt64(42), tag: newInt(17), stringType: 0, timeType: 0, set: false, omitEmpty: false}},
 	{"set", fieldParameters{set: true}},
 }
 
@@ -486,6 +488,8 @@ var unmarshalTestData = []struct {
 	{[]byte{0x02, 0x01, 0x10}, newInt(16)},
 	{[]byte{0x13, 0x04, 't', 'e', 's', 't'}, newString("test")},
 	{[]byte{0x16, 0x04, 't', 'e', 's', 't'}, newString("test")},
+	// Ampersand is allowed in PrintableString due to mistakes by major CAs.
+	{[]byte{0x13, 0x05, 't', 'e', 's', 't', '&'}, newString("test&")},
 	{[]byte{0x16, 0x04, 't', 'e', 's', 't'}, &RawValue{0, 22, false, []byte("test"), []byte("\x16\x04test")}},
 	{[]byte{0x04, 0x04, 1, 2, 3, 4}, &RawValue{0, 4, false, []byte{1, 2, 3, 4}, []byte{4, 4, 1, 2, 3, 4}}},
 	{[]byte{0x30, 0x03, 0x81, 0x01, 0x01}, &TestContextSpecificTags{1}},
@@ -496,6 +500,7 @@ var unmarshalTestData = []struct {
 	{[]byte{0x30, 0x0b, 0x13, 0x03, 0x66, 0x6f, 0x6f, 0x02, 0x01, 0x22, 0x02, 0x01, 0x33}, &TestElementsAfterString{"foo", 0x22, 0x33}},
 	{[]byte{0x30, 0x05, 0x02, 0x03, 0x12, 0x34, 0x56}, &TestBigInt{big.NewInt(0x123456)}},
 	{[]byte{0x30, 0x0b, 0x31, 0x09, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03}, &TestSet{Ints: []int{1, 2, 3}}},
+	{[]byte{0x12, 0x0b, '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ' '}, newString("0123456789 ")},
 }
 
 func TestUnmarshal(t *testing.T) {
@@ -1075,6 +1080,7 @@ func TestTaggedRawValue(t *testing.T) {
 		{true, []byte{0x30, 3, (ClassContextSpecific << 6) | tag, 1, 1}},
 		{true, []byte{0x30, 3, (ClassContextSpecific << 6) | tag | isCompound, 1, 1}},
 		{false, []byte{0x30, 3, (ClassApplication << 6) | tag | isCompound, 1, 1}},
+		{false, []byte{0x30, 3, (ClassPrivate << 6) | tag | isCompound, 1, 1}},
 	}
 
 	for i, test := range tests {
