@@ -263,6 +263,7 @@ func forcegchelper() {
 // Gosched yields the processor, allowing other goroutines to run. It does not
 // suspend the current goroutine, so execution resumes automatically.
 func Gosched() {
+	checkTimeouts()
 	mcall(gosched_m)
 }
 
@@ -282,6 +283,9 @@ func goschedguarded() {
 // Reasons should be unique and descriptive.
 // Do not re-use reasons, add new ones.
 func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason waitReason, traceEv byte, traceskip int) {
+	if reason != waitReasonSleep {
+		checkTimeouts() // timeouts may expire while two goroutines keep the scheduler busy
+	}
 	mp := acquirem()
 	gp := mp.curg
 	status := readgstatus(gp)
@@ -513,6 +517,8 @@ func cpuinit() {
 	support_popcnt = cpu.X86.HasPOPCNT
 	support_sse2 = cpu.X86.HasSSE2
 	support_sse41 = cpu.X86.HasSSE41
+
+	arm64_support_atomics = cpu.ARM64.HasATOMICS
 }
 
 // The bootstrap sequence is:
@@ -1227,6 +1233,7 @@ func mstart() {
 	if osStack {
 		// Initialize stack bounds from system stack.
 		// Cgo may have left stack size in stack.hi.
+		// minit may update the stack bounds.
 		size := _g_.stack.hi
 		if size == 0 {
 			size = 8192 * sys.StackGuardMultiplier
@@ -2359,6 +2366,14 @@ stop:
 			traceGoUnpark(gp, 0)
 		}
 		return gp, false
+	}
+
+	// wasm only:
+	// Check if a goroutine is waiting for a callback from the WebAssembly host.
+	// If yes, pause the execution until a callback was triggered.
+	if pauseSchedulerUntilCallback() {
+		// A callback was triggered and caused at least one goroutine to wake up.
+		goto top
 	}
 
 	// Before we drop our P, make a snapshot of the allp slice,
@@ -3699,7 +3714,7 @@ func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
 	// As a workaround, create a counter of SIGPROFs while in critical section
 	// to store the count, and pass it to sigprof.add() later when SIGPROF is
 	// received from somewhere else (with _LostSIGPROFDuringAtomic64 as pc).
-	if GOARCH == "mips" || GOARCH == "mipsle" {
+	if GOARCH == "mips" || GOARCH == "mipsle" || GOARCH == "arm" {
 		if f := findfunc(pc); f.valid() {
 			if hasprefix(funcname(f), "runtime/internal/atomic") {
 				lostAtomic64Count++
@@ -3839,7 +3854,7 @@ func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
 	}
 
 	if prof.hz != 0 {
-		if (GOARCH == "mips" || GOARCH == "mipsle") && lostAtomic64Count > 0 {
+		if (GOARCH == "mips" || GOARCH == "mipsle" || GOARCH == "arm") && lostAtomic64Count > 0 {
 			cpuprof.addLostAtomic64(lostAtomic64Count)
 			lostAtomic64Count = 0
 		}

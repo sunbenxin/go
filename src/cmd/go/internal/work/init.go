@@ -9,6 +9,7 @@ package work
 import (
 	"cmd/go/internal/base"
 	"cmd/go/internal/cfg"
+	"cmd/go/internal/load"
 	"flag"
 	"fmt"
 	"os"
@@ -43,11 +44,16 @@ func instrumentInit() {
 		fmt.Fprintf(os.Stderr, "-msan is not supported on %s/%s\n", cfg.Goos, cfg.Goarch)
 		os.Exit(2)
 	}
-	if cfg.BuildRace && (cfg.Goarch != "amd64" || cfg.Goos != "linux" && cfg.Goos != "freebsd" && cfg.Goos != "darwin" && cfg.Goos != "windows") {
-		fmt.Fprintf(os.Stderr, "go %s: -race is only supported on linux/amd64, freebsd/amd64, darwin/amd64 and windows/amd64\n", flag.Args()[0])
-		os.Exit(2)
+	if cfg.BuildRace {
+		platform := cfg.Goos + "/" + cfg.Goarch
+		switch platform {
+		default:
+			fmt.Fprintf(os.Stderr, "go %s: -race is only supported on linux/amd64, linux/ppc64le, freebsd/amd64, netbsd/amd64, darwin/amd64 and windows/amd64\n", flag.Args()[0])
+			os.Exit(2)
+		case "linux/amd64", "linux/ppc64le", "freebsd/amd64", "netbsd/amd64", "darwin/amd64", "windows/amd64":
+			// race supported on these platforms
+		}
 	}
-
 	mode := "race"
 	if cfg.BuildMSan {
 		mode = "msan"
@@ -218,5 +224,17 @@ func buildModeInit() {
 			}
 			cfg.BuildContext.InstallSuffix += codegenArg[1:]
 		}
+	}
+
+	switch cfg.BuildGetmode {
+	case "":
+		// ok
+	case "local", "vendor":
+		// ok but check for modules
+		if load.ModLookup == nil {
+			base.Fatalf("build flag -getmode=%s only valid when using modules", cfg.BuildGetmode)
+		}
+	default:
+		base.Fatalf("-getmode=%s not supported (can be '', 'local', or 'vendor')", cfg.BuildGetmode)
 	}
 }

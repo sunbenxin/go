@@ -196,10 +196,13 @@ func (b *Builder) buildActionID(a *Action) cache.ActionID {
 	fmt.Fprintf(h, "goos %s goarch %s\n", cfg.Goos, cfg.Goarch)
 	fmt.Fprintf(h, "import %q\n", p.ImportPath)
 	fmt.Fprintf(h, "omitdebug %v standard %v local %v prefix %q\n", p.Internal.OmitDebug, p.Standard, p.Internal.Local, p.Internal.LocalPrefix)
+	if p.Internal.ForceLibrary {
+		fmt.Fprintf(h, "forcelibrary\n")
+	}
 	if len(p.CgoFiles)+len(p.SwigFiles) > 0 {
 		fmt.Fprintf(h, "cgo %q\n", b.toolID("cgo"))
-		cppflags, cflags, cxxflags, fflags, _, _ := b.CFlags(p)
-		fmt.Fprintf(h, "CC=%q %q %q\n", b.ccExe(), cppflags, cflags)
+		cppflags, cflags, cxxflags, fflags, ldflags, _ := b.CFlags(p)
+		fmt.Fprintf(h, "CC=%q %q %q %q\n", b.ccExe(), cppflags, cflags, ldflags)
 		if len(p.CXXFiles)+len(p.SwigFiles) > 0 {
 			fmt.Fprintf(h, "CXX=%q %q\n", b.cxxExe(), cxxflags)
 		}
@@ -599,6 +602,13 @@ func (b *Builder) build(a *Action) (err error) {
 		fmt.Fprintf(&icfg, "packagefile %s=%s\n", p1.ImportPath, a1.built)
 	}
 
+	if p.Internal.BuildInfo != "" && cfg.ModulesEnabled {
+		if err := b.writeFile(objdir+"_gomod_.go", load.ModInfoProg(p.Internal.BuildInfo)); err != nil {
+			return err
+		}
+		gofiles = append(gofiles, objdir+"_gomod_.go")
+	}
+
 	// Compile Go.
 	objpkg := objdir + "_pkg_.a"
 	ofile, out, err := BuildToolchain.gc(b, a, objpkg, icfg.Bytes(), len(sfiles) > 0, gofiles)
@@ -718,16 +728,11 @@ func (b *Builder) cacheObjdirFile(a *Action, c *cache.Cache, name string) error 
 }
 
 func (b *Builder) findCachedObjdirFile(a *Action, c *cache.Cache, name string) (string, error) {
-	entry, err := c.Get(cache.Subkey(a.actionID, name))
+	file, _, err := c.GetFile(cache.Subkey(a.actionID, name))
 	if err != nil {
 		return "", err
 	}
-	out := c.OutputFile(entry.OutputID)
-	info, err := os.Stat(out)
-	if err != nil || info.Size() != entry.Size {
-		return "", fmt.Errorf("not in cache")
-	}
-	return out, nil
+	return file, nil
 }
 
 func (b *Builder) loadCachedObjdirFile(a *Action, c *cache.Cache, name string) error {
@@ -833,16 +838,21 @@ func (b *Builder) loadCachedCgoFiles(a *Action) bool {
 	return true
 }
 
+// vetConfig is the configuration passed to vet describing a single package.
 type vetConfig struct {
-	Compiler    string
-	Dir         string
-	GoFiles     []string
-	ImportMap   map[string]string
-	PackageFile map[string]string
-	Standard    map[string]bool
-	ImportPath  string
+	Compiler   string   // compiler name (gc, gccgo)
+	Dir        string   // directory containing package
+	ImportPath string   // canonical import path ("package path")
+	GoFiles    []string // absolute paths to package source files
 
-	SucceedOnTypecheckFailure bool
+	ImportMap   map[string]string // map import path in source code to package path
+	PackageFile map[string]string // map package path to .a file with export data
+	Standard    map[string]bool   // map package path to whether it's in the standard library
+	PackageVetx map[string]string // map package path to vetx data from earlier vet run
+	VetxOnly    bool              // only compute vetx data; don't report detected problems
+	VetxOutput  string            // write vetx data to this output file
+
+	SucceedOnTypecheckFailure bool // awful hack; see #18395 and below
 }
 
 func buildVetConfig(a *Action, gofiles []string) {
@@ -903,13 +913,51 @@ func (b *Builder) vet(a *Action) error {
 	// a.Deps[0] is the build of the package being vetted.
 	// a.Deps[1] is the build of the "fmt" package.
 
+	a.Failed = false // vet of dependency may have failed but we can still succeed
+
+	if a.Deps[0].Failed {
+		// The build of the package has failed. Skip vet check.
+		// Vet could return export data for non-typecheck errors,
+		// but we ignore it because the package cannot be compiled.
+		return nil
+	}
+
 	vcfg := a.Deps[0].vetCfg
 	if vcfg == nil {
 		// Vet config should only be missing if the build failed.
-		if !a.Deps[0].Failed {
-			return fmt.Errorf("vet config not found")
+		return fmt.Errorf("vet config not found")
+	}
+
+	vcfg.VetxOnly = a.VetxOnly
+	vcfg.VetxOutput = a.Objdir + "vet.out"
+	vcfg.PackageVetx = make(map[string]string)
+
+	h := cache.NewHash("vet " + a.Package.ImportPath)
+	fmt.Fprintf(h, "vet %q\n", b.toolID("vet"))
+
+	// Note: We could decide that vet should compute export data for
+	// all analyses, in which case we don't need to include the flags here.
+	// But that would mean that if an analysis causes problems like
+	// unexpected crashes there would be no way to turn it off.
+	// It seems better to let the flags disable export analysis too.
+	fmt.Fprintf(h, "vetflags %q\n", VetFlags)
+
+	fmt.Fprintf(h, "pkg %q\n", a.Deps[0].actionID)
+	for _, a1 := range a.Deps {
+		if a1.Mode == "vet" && a1.built != "" {
+			fmt.Fprintf(h, "vetout %q %s\n", a1.Package.ImportPath, b.fileHash(a1.built))
+			vcfg.PackageVetx[a1.Package.ImportPath] = a1.built
 		}
-		return nil
+	}
+	key := cache.ActionID(h.Sum())
+
+	if vcfg.VetxOnly {
+		if c := cache.Default(); c != nil && !cfg.BuildA {
+			if file, _, err := c.GetFile(key); err == nil {
+				a.built = file
+				return nil
+			}
+		}
 	}
 
 	if vcfg.ImportMap["fmt"] == "" {
@@ -939,7 +987,7 @@ func (b *Builder) vet(a *Action) error {
 		return err
 	}
 
-	var env []string
+	env := b.cCompilerEnv()
 	if cfg.BuildToolchainName == "gccgo" {
 		env = append(env, "GCCGO="+BuildToolchain.compiler())
 	}
@@ -949,7 +997,18 @@ func (b *Builder) vet(a *Action) error {
 	if tool == "" {
 		tool = base.Tool("vet")
 	}
-	return b.run(a, p.Dir, p.ImportPath, env, cfg.BuildToolexec, tool, VetFlags, a.Objdir+"vet.cfg")
+	runErr := b.run(a, p.Dir, p.ImportPath, env, cfg.BuildToolexec, tool, VetFlags, a.Objdir+"vet.cfg")
+
+	// If vet wrote export data, save it for input to future vets.
+	if f, err := os.Open(vcfg.VetxOutput); err == nil {
+		a.built = vcfg.VetxOutput
+		if c := cache.Default(); c != nil {
+			c.Put(key, f)
+		}
+		f.Close()
+	}
+
+	return runErr
 }
 
 // linkActionID computes the action ID for a link action.
@@ -1313,7 +1372,9 @@ func BuildInstallFunc(b *Builder, a *Action) (err error) {
 	// so the built target is not in the a1.Objdir tree that b.cleanup(a1) removes.
 	if a1.built == a.Target {
 		a.built = a.Target
-		b.cleanup(a1)
+		if !a.buggyInstall {
+			b.cleanup(a1)
+		}
 		// Whether we're smart enough to avoid a complete rebuild
 		// depends on exactly what the staleness and rebuild algorithms
 		// are, as well as potentially the state of the Go build cache.
@@ -1367,7 +1428,9 @@ func BuildInstallFunc(b *Builder, a *Action) (err error) {
 		}
 	}
 
-	defer b.cleanup(a1)
+	if !a.buggyInstall {
+		defer b.cleanup(a1)
+	}
 
 	return b.moveOrCopyFile(a.Target, a1.built, perm, false)
 }
@@ -1801,6 +1864,13 @@ func joinUnambiguously(a []string) string {
 	return buf.String()
 }
 
+// cCompilerEnv returns environment variables to set when running the
+// C compiler. This is needed to disable escape codes in clang error
+// messages that confuse tools like cgo.
+func (b *Builder) cCompilerEnv() []string {
+	return []string{"TERM=dumb"}
+}
+
 // mkdir makes the named directory.
 func (b *Builder) Mkdir(dir string) error {
 	// Make Mkdir(a.Objdir) a no-op instead of an error when a.Objdir == "".
@@ -1948,7 +2018,7 @@ func (b *Builder) ccompile(a *Action, p *load.Package, outfile string, flags []s
 	if !filepath.IsAbs(outfile) {
 		outfile = filepath.Join(p.Dir, outfile)
 	}
-	output, err := b.runOut(filepath.Dir(file), nil, compiler, flags, "-o", outfile, "-c", filepath.Base(file))
+	output, err := b.runOut(filepath.Dir(file), b.cCompilerEnv(), compiler, flags, "-o", outfile, "-c", filepath.Base(file))
 	if len(output) > 0 {
 		// On FreeBSD 11, when we pass -g to clang 3.8 it
 		// invokes its internal assembler with -dwarf-version=2.
@@ -1988,7 +2058,7 @@ func (b *Builder) gccld(p *load.Package, objdir, out string, flags []string, obj
 	} else {
 		cmd = b.GccCmd(p.Dir, objdir)
 	}
-	return b.run(nil, p.Dir, p.ImportPath, nil, cmd, "-o", out, objs, flags)
+	return b.run(nil, p.Dir, p.ImportPath, b.cCompilerEnv(), cmd, "-o", out, objs, flags)
 }
 
 // Grab these before main helpfully overwrites them.
@@ -2283,7 +2353,7 @@ func (b *Builder) cgo(a *Action, cgoExe, objdir string, pcCFLAGS, pcLDFLAGS, cgo
 	// along to the host linker. At this point in the code, cgoLDFLAGS
 	// consists of the original $CGO_LDFLAGS (unchecked) and all the
 	// flags put together from source code (checked).
-	var cgoenv []string
+	cgoenv := b.cCompilerEnv()
 	if len(cgoLDFLAGS) > 0 {
 		flags := make([]string, len(cgoLDFLAGS))
 		for i, f := range cgoLDFLAGS {
@@ -2411,7 +2481,15 @@ func (b *Builder) dynimport(a *Action, p *load.Package, objdir, importGo, cgoExe
 	// we need to use -pie for Linux/ARM to get accurate imported sym
 	ldflags := cgoLDFLAGS
 	if (cfg.Goarch == "arm" && cfg.Goos == "linux") || cfg.Goos == "android" {
-		ldflags = append(ldflags, "-pie")
+		// -static -pie doesn't make sense, and causes link errors.
+		// Issue 26197.
+		n := make([]string, 0, len(ldflags))
+		for _, flag := range ldflags {
+			if flag != "-static" {
+				n = append(n, flag)
+			}
+		}
+		ldflags = append(n, "-pie")
 	}
 	if err := b.gccld(p, objdir, dynobj, ldflags, linkobj); err != nil {
 		return err
@@ -2422,7 +2500,7 @@ func (b *Builder) dynimport(a *Action, p *load.Package, objdir, importGo, cgoExe
 	if p.Standard && p.ImportPath == "runtime/cgo" {
 		cgoflags = []string{"-dynlinker"} // record path to dynamic linker
 	}
-	return b.run(a, p.Dir, p.ImportPath, nil, cfg.BuildToolexec, cgoExe, "-dynpackage", p.Name, "-dynimport", dynobj, "-dynout", importGo, cgoflags)
+	return b.run(a, p.Dir, p.ImportPath, b.cCompilerEnv(), cfg.BuildToolexec, cgoExe, "-dynpackage", p.Name, "-dynimport", dynobj, "-dynout", importGo, cgoflags)
 }
 
 // Run SWIG on all SWIG input files.
