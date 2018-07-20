@@ -158,7 +158,9 @@ func GetImporter(searchpaths []string, initmap map[*types.Package]InitData) Impo
 			reader = rs
 			fpath = "<lookup " + pkgpath + ">"
 			// Take name from Name method (like on os.File) if present.
-			if n, ok := rc.(interface{ Name() string }); ok {
+			if n, ok := rc.(interface {
+				Name() string
+			}); ok {
 				fpath = n.Name()
 			}
 		} else {

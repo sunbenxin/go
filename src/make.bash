@@ -74,6 +74,15 @@ if [ "$GOBUILDTIMELOGFILE" != "" ]; then
 fi
 
 # Test for Windows.
+# 1、单小括号 ()
+#　①命令组。括号中的命令将会新开一个子shell顺序执行，所以括号中的变
+#       量不能够被脚本余下的部分使用。括号中多个命令之间用分号隔开，
+        最后一个命令可以没有分号，各命令和括号之间不必有空格。
+#　②命令替换。等同于`cmd`，shell扫描一遍命令行，发现了$(cmd)结构，便
+#       将$(cmd)中的cmd执行一次，得到其标准输出，再将此输出放到原来
+#       命令。有些shell不支持，如tcsh。
+#　③用于初始化数组。如：array=(a b c d)
+#
 case "$(uname)" in
 *MINGW* | *WIN32* | *CYGWIN*)
 	echo 'ERROR: Do not use make.bash to build on Windows.'
@@ -139,6 +148,17 @@ fi
 
 export GOROOT_BOOTSTRAP=${GOROOT_BOOTSTRAP:-$HOME/go1.4}
 export GOROOT="$(cd .. && pwd)"
+
+#在bash中IFS是内部的域分隔符，manual中对其的叙述如下：
+#IFS The Internal Field Separator that is used for word splitting after expansion
+# and to split lines into words with the read builtin command. The default value is ''.
+#如下是一些值得注意的地方。
+#1. IFS的默认值为：空白（包括：空格，tab, 和新行)，将其ASSII码用十六进制打印出来就是：20 09 0a （见下面的shell脚本）。
+#2. IFS对空格的空白的处理和其他字符不一样，左右两边的纯空白会被忽略，多个连续的空白被当成一个IFS处理。
+#3. S*中使用IFS中的第一个字符。
+#4. awk中的FS（域分隔符）也和IFS有类似的用法和作用。
+
+#http://man.linuxde.net/type
 IFS=$'\n'; for go_exe in $(type -ap go); do
 	if [ ! -x "$GOROOT_BOOTSTRAP/bin/go" ]; then
 		goroot=$(GOROOT='' GOOS='' GOARCH='' "$go_exe" env GOROOT)
