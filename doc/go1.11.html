@@ -266,8 +266,6 @@ func f(v interface{}) {
   This is currently only supported by Delve.
 </p>
 
-<h2 id="tools">Tools</h2>
-
 <h3 id="test">Test</h3>
 
 <p>
@@ -310,6 +308,26 @@ func f(v interface{}) {
   The <code>go</code>&nbsp;<code>tool</code>&nbsp;<code>trace</code>
   command visualizes this information in the trace view and the new
   user task/region analysis page.
+</p>
+
+<h3 id="gofmt">Gofmt</h3>
+
+<p>
+  One minor detail of the default formatting of Go source code has changed.
+  When formatting expression lists with inline comments, the comments were
+  aligned according to a heuristic.
+  However, in some cases the alignment would be split up too easily, or
+  introduce too much whitespace.
+  The heuristic has been changed to behave better for human-written code.
+</p>
+
+<p>
+  Note that these kinds of minor updates to gofmt are expected from time to
+  time.
+  In general, systems that need consistent formatting of Go source code should
+  use a specific version of the <code>gofmt</code> binary.
+  See the <a href="/pkg/go/format/">go/format</a> package godoc for more
+  information.
 </p>
 
 <h2 id="runtime">Runtime</h2>
@@ -550,7 +568,7 @@ for k := range m {
   <dd>
 
     <p><!-- CL 108996 -->
-      <a href="/pkg/math/bin/#Int.ModInverse"><code>ModInverse</code></a> now returns nil when g and n are not relatively prime. The result was previously undefined.
+      <a href="/pkg/math/big/#Int.ModInverse"><code>ModInverse</code></a> now returns nil when g and n are not relatively prime. The result was previously undefined.
     </p>
 
 </dl><!-- math/big -->
@@ -596,9 +614,9 @@ for k := range m {
     <p><!-- CL 107715 -->
       The <code>net</code> package now automatically uses the
       <a href="http://man7.org/linux/man-pages/man2/splice.2.html"><code>splice</code> system call</a>
-      on Linux when calling copying data between TCP connections in
+      on Linux when copying data between TCP connections in
       <a href="/pkg/net/#TCPConn.ReadFrom"><code>TCPConn.ReadFrom</code></a>, as called by
-      <a href="/pkg/io/#Copy"><code>io.Copy</code>. The result is faster, more efficient TCP proxying.
+      <a href="/pkg/io/#Copy"><code>io.Copy</code></a>. The result is faster, more efficient TCP proxying.
     </p>
 
     <p><!-- CL 108297 -->
@@ -623,7 +641,7 @@ for k := range m {
 
     <p><!-- CL 79919 -->
       The <a href="/pkg/net/http/#Cookie"><code>Cookie</code></a> type has a new
-      The <a href="/pkg/net/http/#Cookie.SameSite"><code>SameSite</code></a> field
+      <a href="/pkg/net/http/#Cookie.SameSite"><code>SameSite</code></a> field
       (of new type also named
       <a href="/pkg/net/http/#SameSite"><code>SameSite</code></a>) to represent the new cookie attribute recently supported by most browsers.
       The <code>net/http</code>'s <code>Transport</code> does not use the <code>SameSite</code>
