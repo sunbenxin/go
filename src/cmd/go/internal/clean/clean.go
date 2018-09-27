@@ -18,11 +18,12 @@ import (
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/load"
 	"cmd/go/internal/modfetch"
+	"cmd/go/internal/modload"
 	"cmd/go/internal/work"
 )
 
 var CmdClean = &base.Command{
-	UsageLine: "clean [clean flags] [build flags] [packages]",
+	UsageLine: "go clean [clean flags] [build flags] [packages]",
 	Short:     "remove object files and cached files",
 	Long: `
 Clean removes object files from package source directories.
@@ -102,13 +103,19 @@ func init() {
 }
 
 func runClean(cmd *base.Command, args []string) {
-	for _, pkg := range load.PackagesAndErrors(args) {
-		clean(pkg)
+	if len(args) == 0 && modload.Failed() {
+		// Don't try to clean current directory,
+		// which will cause modload to base.Fatalf.
+	} else {
+		for _, pkg := range load.PackagesAndErrors(args) {
+			clean(pkg)
+		}
 	}
 
+	var b work.Builder
+	b.Print = fmt.Print
+
 	if cleanCache {
-		var b work.Builder
-		b.Print = fmt.Print
 		dir := cache.DefaultDir()
 		if dir != "off" {
 			// Remove the cache subdirectories but not the top cache directory.
@@ -147,11 +154,16 @@ func runClean(cmd *base.Command, args []string) {
 	}
 
 	if cleanModcache {
-		if modfetch.SrcMod == "" {
+		if modfetch.PkgMod == "" {
 			base.Fatalf("go clean -modcache: no module cache")
 		}
-		if err := removeAll(modfetch.SrcMod); err != nil {
-			base.Errorf("go clean -modcache: %v", err)
+		if cfg.BuildN || cfg.BuildX {
+			b.Showcmd("", "rm -rf %s", modfetch.PkgMod)
+		}
+		if !cfg.BuildN {
+			if err := removeAll(modfetch.PkgMod); err != nil {
+				base.Errorf("go clean -modcache: %v", err)
+			}
 		}
 	}
 }

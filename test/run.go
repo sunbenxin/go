@@ -354,8 +354,9 @@ func goDirPackages(longdir string, singlefilepkgs bool) ([][]string, error) {
 }
 
 type context struct {
-	GOOS   string
-	GOARCH string
+	GOOS     string
+	GOARCH   string
+	noOptEnv bool
 }
 
 // shouldTest looks for build tags in a source file and returns
@@ -375,10 +376,13 @@ func shouldTest(src string, goos, goarch string) (ok bool, whyNot string) {
 		if len(line) == 0 || line[0] != '+' {
 			continue
 		}
+		gcFlags := os.Getenv("GO_GCFLAGS")
 		ctxt := &context{
-			GOOS:   goos,
-			GOARCH: goarch,
+			GOOS:     goos,
+			GOARCH:   goarch,
+			noOptEnv: strings.Contains(gcFlags, "-N") || strings.Contains(gcFlags, "-l"),
 		}
+
 		words := strings.Fields(line)
 		if words[0] == "+build" {
 			ok := false
@@ -425,6 +429,10 @@ func (ctxt *context) match(name string) bool {
 		return true
 	}
 
+	if ctxt.noOptEnv && name == "gcflags_noopt" {
+		return true
+	}
+
 	if name == "test_run" {
 		return true
 	}
@@ -435,7 +443,7 @@ func (ctxt *context) match(name string) bool {
 func init() { checkShouldTest() }
 
 // goGcflags returns the -gcflags argument to use with go build / go run.
-// This must match the flags used for building the standard libary,
+// This must match the flags used for building the standard library,
 // or else the commands will rebuild any needed packages (like runtime)
 // over and over.
 func goGcflags() string {
@@ -1329,11 +1337,12 @@ const (
 
 var (
 	// Regexp to split a line in code and comment, trimming spaces
-	rxAsmComment = regexp.MustCompile(`^\s*(.*?)\s*(?:\/\/\s*(.+)\s*)?$`)
+	rxAsmComment = regexp.MustCompile(`^\s*(.*?)\s*(?://\s*(.+)\s*)?$`)
 
-	// Regexp to extract an architecture check: architecture name, followed by semi-colon,
-	// followed by a comma-separated list of opcode checks.
-	rxAsmPlatform = regexp.MustCompile(`(\w+)(/\w+)?(/\w*)?:(` + reMatchCheck + `(?:,` + reMatchCheck + `)*)`)
+	// Regexp to extract an architecture check: architecture name (or triplet),
+	// followed by semi-colon, followed by a comma-separated list of opcode checks.
+	// Extraneous spaces are ignored.
+	rxAsmPlatform = regexp.MustCompile(`(\w+)(/\w+)?(/\w*)?\s*:\s*(` + reMatchCheck + `(?:\s*,\s*` + reMatchCheck + `)*)`)
 
 	// Regexp to extract a single opcoded check
 	rxAsmCheck = regexp.MustCompile(reMatchCheck)

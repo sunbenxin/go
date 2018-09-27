@@ -2409,7 +2409,7 @@ func rewriteValuegeneric_OpAdd32_30(v *Value) bool {
 func rewriteValuegeneric_OpAdd32F_0(v *Value) bool {
 	// match: (Add32F (Const32F [c]) (Const32F [d]))
 	// cond:
-	// result: (Const32F [f2i(float64(i2f32(c) + i2f32(d)))])
+	// result: (Const32F [auxFrom32F(auxTo32F(c) + auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -2423,12 +2423,12 @@ func rewriteValuegeneric_OpAdd32F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(float64(i2f32(c) + i2f32(d)))
+		v.AuxInt = auxFrom32F(auxTo32F(c) + auxTo32F(d))
 		return true
 	}
 	// match: (Add32F (Const32F [d]) (Const32F [c]))
 	// cond:
-	// result: (Const32F [f2i(float64(i2f32(c) + i2f32(d)))])
+	// result: (Const32F [auxFrom32F(auxTo32F(c) + auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -2442,43 +2442,7 @@ func rewriteValuegeneric_OpAdd32F_0(v *Value) bool {
 		}
 		c := v_1.AuxInt
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(float64(i2f32(c) + i2f32(d)))
-		return true
-	}
-	// match: (Add32F x (Const32F [0]))
-	// cond:
-	// result: x
-	for {
-		_ = v.Args[1]
-		x := v.Args[0]
-		v_1 := v.Args[1]
-		if v_1.Op != OpConst32F {
-			break
-		}
-		if v_1.AuxInt != 0 {
-			break
-		}
-		v.reset(OpCopy)
-		v.Type = x.Type
-		v.AddArg(x)
-		return true
-	}
-	// match: (Add32F (Const32F [0]) x)
-	// cond:
-	// result: x
-	for {
-		_ = v.Args[1]
-		v_0 := v.Args[0]
-		if v_0.Op != OpConst32F {
-			break
-		}
-		if v_0.AuxInt != 0 {
-			break
-		}
-		x := v.Args[1]
-		v.reset(OpCopy)
-		v.Type = x.Type
-		v.AddArg(x)
+		v.AuxInt = auxFrom32F(auxTo32F(c) + auxTo32F(d))
 		return true
 	}
 	return false
@@ -3454,7 +3418,7 @@ func rewriteValuegeneric_OpAdd64_30(v *Value) bool {
 func rewriteValuegeneric_OpAdd64F_0(v *Value) bool {
 	// match: (Add64F (Const64F [c]) (Const64F [d]))
 	// cond:
-	// result: (Const64F [f2i(i2f(c) + i2f(d))])
+	// result: (Const64F [auxFrom64F(auxTo64F(c) + auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -3468,12 +3432,12 @@ func rewriteValuegeneric_OpAdd64F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConst64F)
-		v.AuxInt = f2i(i2f(c) + i2f(d))
+		v.AuxInt = auxFrom64F(auxTo64F(c) + auxTo64F(d))
 		return true
 	}
 	// match: (Add64F (Const64F [d]) (Const64F [c]))
 	// cond:
-	// result: (Const64F [f2i(i2f(c) + i2f(d))])
+	// result: (Const64F [auxFrom64F(auxTo64F(c) + auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -3487,43 +3451,7 @@ func rewriteValuegeneric_OpAdd64F_0(v *Value) bool {
 		}
 		c := v_1.AuxInt
 		v.reset(OpConst64F)
-		v.AuxInt = f2i(i2f(c) + i2f(d))
-		return true
-	}
-	// match: (Add64F x (Const64F [0]))
-	// cond:
-	// result: x
-	for {
-		_ = v.Args[1]
-		x := v.Args[0]
-		v_1 := v.Args[1]
-		if v_1.Op != OpConst64F {
-			break
-		}
-		if v_1.AuxInt != 0 {
-			break
-		}
-		v.reset(OpCopy)
-		v.Type = x.Type
-		v.AddArg(x)
-		return true
-	}
-	// match: (Add64F (Const64F [0]) x)
-	// cond:
-	// result: x
-	for {
-		_ = v.Args[1]
-		v_0 := v.Args[0]
-		if v_0.Op != OpConst64F {
-			break
-		}
-		if v_0.AuxInt != 0 {
-			break
-		}
-		x := v.Args[1]
-		v.reset(OpCopy)
-		v.Type = x.Type
-		v.AddArg(x)
+		v.AuxInt = auxFrom64F(auxTo64F(c) + auxTo64F(d))
 		return true
 	}
 	return false
@@ -7566,7 +7494,7 @@ func rewriteValuegeneric_OpConvert_0(v *Value) bool {
 func rewriteValuegeneric_OpCvt32Fto32_0(v *Value) bool {
 	// match: (Cvt32Fto32 (Const32F [c]))
 	// cond:
-	// result: (Const32 [int64(int32(i2f(c)))])
+	// result: (Const32 [int64(int32(auxTo32F(c)))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst32F {
@@ -7574,7 +7502,7 @@ func rewriteValuegeneric_OpCvt32Fto32_0(v *Value) bool {
 		}
 		c := v_0.AuxInt
 		v.reset(OpConst32)
-		v.AuxInt = int64(int32(i2f(c)))
+		v.AuxInt = int64(int32(auxTo32F(c)))
 		return true
 	}
 	return false
@@ -7582,7 +7510,7 @@ func rewriteValuegeneric_OpCvt32Fto32_0(v *Value) bool {
 func rewriteValuegeneric_OpCvt32Fto64_0(v *Value) bool {
 	// match: (Cvt32Fto64 (Const32F [c]))
 	// cond:
-	// result: (Const64 [int64(i2f(c))])
+	// result: (Const64 [int64(auxTo32F(c))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst32F {
@@ -7590,7 +7518,7 @@ func rewriteValuegeneric_OpCvt32Fto64_0(v *Value) bool {
 		}
 		c := v_0.AuxInt
 		v.reset(OpConst64)
-		v.AuxInt = int64(i2f(c))
+		v.AuxInt = int64(auxTo32F(c))
 		return true
 	}
 	return false
@@ -7614,7 +7542,7 @@ func rewriteValuegeneric_OpCvt32Fto64F_0(v *Value) bool {
 func rewriteValuegeneric_OpCvt32to32F_0(v *Value) bool {
 	// match: (Cvt32to32F (Const32 [c]))
 	// cond:
-	// result: (Const32F [f2i(float64(float32(int32(c))))])
+	// result: (Const32F [auxFrom32F(float32(int32(c)))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst32 {
@@ -7622,7 +7550,7 @@ func rewriteValuegeneric_OpCvt32to32F_0(v *Value) bool {
 		}
 		c := v_0.AuxInt
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(float64(float32(int32(c))))
+		v.AuxInt = auxFrom32F(float32(int32(c)))
 		return true
 	}
 	return false
@@ -7630,7 +7558,7 @@ func rewriteValuegeneric_OpCvt32to32F_0(v *Value) bool {
 func rewriteValuegeneric_OpCvt32to64F_0(v *Value) bool {
 	// match: (Cvt32to64F (Const32 [c]))
 	// cond:
-	// result: (Const64F [f2i(float64(int32(c)))])
+	// result: (Const64F [auxFrom64F(float64(int32(c)))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst32 {
@@ -7638,7 +7566,7 @@ func rewriteValuegeneric_OpCvt32to64F_0(v *Value) bool {
 		}
 		c := v_0.AuxInt
 		v.reset(OpConst64F)
-		v.AuxInt = f2i(float64(int32(c)))
+		v.AuxInt = auxFrom64F(float64(int32(c)))
 		return true
 	}
 	return false
@@ -7646,7 +7574,7 @@ func rewriteValuegeneric_OpCvt32to64F_0(v *Value) bool {
 func rewriteValuegeneric_OpCvt64Fto32_0(v *Value) bool {
 	// match: (Cvt64Fto32 (Const64F [c]))
 	// cond:
-	// result: (Const32 [int64(int32(i2f(c)))])
+	// result: (Const32 [int64(int32(auxTo64F(c)))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst64F {
@@ -7654,7 +7582,7 @@ func rewriteValuegeneric_OpCvt64Fto32_0(v *Value) bool {
 		}
 		c := v_0.AuxInt
 		v.reset(OpConst32)
-		v.AuxInt = int64(int32(i2f(c)))
+		v.AuxInt = int64(int32(auxTo64F(c)))
 		return true
 	}
 	return false
@@ -7662,7 +7590,7 @@ func rewriteValuegeneric_OpCvt64Fto32_0(v *Value) bool {
 func rewriteValuegeneric_OpCvt64Fto32F_0(v *Value) bool {
 	// match: (Cvt64Fto32F (Const64F [c]))
 	// cond:
-	// result: (Const32F [f2i(float64(i2f32(c)))])
+	// result: (Const32F [auxFrom32F(float32(auxTo64F(c)))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst64F {
@@ -7670,7 +7598,7 @@ func rewriteValuegeneric_OpCvt64Fto32F_0(v *Value) bool {
 		}
 		c := v_0.AuxInt
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(float64(i2f32(c)))
+		v.AuxInt = auxFrom32F(float32(auxTo64F(c)))
 		return true
 	}
 	return false
@@ -7678,7 +7606,7 @@ func rewriteValuegeneric_OpCvt64Fto32F_0(v *Value) bool {
 func rewriteValuegeneric_OpCvt64Fto64_0(v *Value) bool {
 	// match: (Cvt64Fto64 (Const64F [c]))
 	// cond:
-	// result: (Const64 [int64(i2f(c))])
+	// result: (Const64 [int64(auxTo64F(c))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst64F {
@@ -7686,7 +7614,7 @@ func rewriteValuegeneric_OpCvt64Fto64_0(v *Value) bool {
 		}
 		c := v_0.AuxInt
 		v.reset(OpConst64)
-		v.AuxInt = int64(i2f(c))
+		v.AuxInt = int64(auxTo64F(c))
 		return true
 	}
 	return false
@@ -7694,7 +7622,7 @@ func rewriteValuegeneric_OpCvt64Fto64_0(v *Value) bool {
 func rewriteValuegeneric_OpCvt64to32F_0(v *Value) bool {
 	// match: (Cvt64to32F (Const64 [c]))
 	// cond:
-	// result: (Const32F [f2i(float64(float32(c)))])
+	// result: (Const32F [auxFrom32F(float32(c))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst64 {
@@ -7702,7 +7630,7 @@ func rewriteValuegeneric_OpCvt64to32F_0(v *Value) bool {
 		}
 		c := v_0.AuxInt
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(float64(float32(c)))
+		v.AuxInt = auxFrom32F(float32(c))
 		return true
 	}
 	return false
@@ -7710,7 +7638,7 @@ func rewriteValuegeneric_OpCvt64to32F_0(v *Value) bool {
 func rewriteValuegeneric_OpCvt64to64F_0(v *Value) bool {
 	// match: (Cvt64to64F (Const64 [c]))
 	// cond:
-	// result: (Const64F [f2i(float64(c))])
+	// result: (Const64F [auxFrom64F(float64(c))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst64 {
@@ -7718,7 +7646,7 @@ func rewriteValuegeneric_OpCvt64to64F_0(v *Value) bool {
 		}
 		c := v_0.AuxInt
 		v.reset(OpConst64F)
-		v.AuxInt = f2i(float64(c))
+		v.AuxInt = auxFrom64F(float64(c))
 		return true
 	}
 	return false
@@ -8342,7 +8270,7 @@ func rewriteValuegeneric_OpDiv32F_0(v *Value) bool {
 	_ = b
 	// match: (Div32F (Const32F [c]) (Const32F [d]))
 	// cond:
-	// result: (Const32F [f2i(float64(i2f32(c) / i2f32(d)))])
+	// result: (Const32F [auxFrom32F(auxTo32F(c) / auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -8356,12 +8284,12 @@ func rewriteValuegeneric_OpDiv32F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(float64(i2f32(c) / i2f32(d)))
+		v.AuxInt = auxFrom32F(auxTo32F(c) / auxTo32F(d))
 		return true
 	}
 	// match: (Div32F x (Const32F <t> [c]))
-	// cond: reciprocalExact32(float32(i2f(c)))
-	// result: (Mul32F x (Const32F <t> [f2i(1/i2f(c))]))
+	// cond: reciprocalExact32(auxTo32F(c))
+	// result: (Mul32F x (Const32F <t> [auxFrom32F(1/auxTo32F(c))]))
 	for {
 		_ = v.Args[1]
 		x := v.Args[0]
@@ -8371,13 +8299,13 @@ func rewriteValuegeneric_OpDiv32F_0(v *Value) bool {
 		}
 		t := v_1.Type
 		c := v_1.AuxInt
-		if !(reciprocalExact32(float32(i2f(c)))) {
+		if !(reciprocalExact32(auxTo32F(c))) {
 			break
 		}
 		v.reset(OpMul32F)
 		v.AddArg(x)
 		v0 := b.NewValue0(v.Pos, OpConst32F, t)
-		v0.AuxInt = f2i(1 / i2f(c))
+		v0.AuxInt = auxFrom32F(1 / auxTo32F(c))
 		v.AddArg(v0)
 		return true
 	}
@@ -8866,7 +8794,7 @@ func rewriteValuegeneric_OpDiv64F_0(v *Value) bool {
 	_ = b
 	// match: (Div64F (Const64F [c]) (Const64F [d]))
 	// cond:
-	// result: (Const64F [f2i(i2f(c) / i2f(d))])
+	// result: (Const64F [auxFrom64F(auxTo64F(c) / auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -8880,12 +8808,12 @@ func rewriteValuegeneric_OpDiv64F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConst64F)
-		v.AuxInt = f2i(i2f(c) / i2f(d))
+		v.AuxInt = auxFrom64F(auxTo64F(c) / auxTo64F(d))
 		return true
 	}
 	// match: (Div64F x (Const64F <t> [c]))
-	// cond: reciprocalExact64(i2f(c))
-	// result: (Mul64F x (Const64F <t> [f2i(1/i2f(c))]))
+	// cond: reciprocalExact64(auxTo64F(c))
+	// result: (Mul64F x (Const64F <t> [auxFrom64F(1/auxTo64F(c))]))
 	for {
 		_ = v.Args[1]
 		x := v.Args[0]
@@ -8895,13 +8823,13 @@ func rewriteValuegeneric_OpDiv64F_0(v *Value) bool {
 		}
 		t := v_1.Type
 		c := v_1.AuxInt
-		if !(reciprocalExact64(i2f(c))) {
+		if !(reciprocalExact64(auxTo64F(c))) {
 			break
 		}
 		v.reset(OpMul64F)
 		v.AddArg(x)
 		v0 := b.NewValue0(v.Pos, OpConst64F, t)
-		v0.AuxInt = f2i(1 / i2f(c))
+		v0.AuxInt = auxFrom64F(1 / auxTo64F(c))
 		v.AddArg(v0)
 		return true
 	}
@@ -9802,7 +9730,7 @@ func rewriteValuegeneric_OpEq32_0(v *Value) bool {
 func rewriteValuegeneric_OpEq32F_0(v *Value) bool {
 	// match: (Eq32F (Const32F [c]) (Const32F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) == i2f(d))])
+	// result: (ConstBool [b2i(auxTo32F(c) == auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -9816,12 +9744,12 @@ func rewriteValuegeneric_OpEq32F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) == i2f(d))
+		v.AuxInt = b2i(auxTo32F(c) == auxTo32F(d))
 		return true
 	}
 	// match: (Eq32F (Const32F [d]) (Const32F [c]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) == i2f(d))])
+	// result: (ConstBool [b2i(auxTo32F(c) == auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -9835,7 +9763,7 @@ func rewriteValuegeneric_OpEq32F_0(v *Value) bool {
 		}
 		c := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) == i2f(d))
+		v.AuxInt = b2i(auxTo32F(c) == auxTo32F(d))
 		return true
 	}
 	return false
@@ -10081,7 +10009,7 @@ func rewriteValuegeneric_OpEq64_0(v *Value) bool {
 func rewriteValuegeneric_OpEq64F_0(v *Value) bool {
 	// match: (Eq64F (Const64F [c]) (Const64F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) == i2f(d))])
+	// result: (ConstBool [b2i(auxTo64F(c) == auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -10095,12 +10023,12 @@ func rewriteValuegeneric_OpEq64F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) == i2f(d))
+		v.AuxInt = b2i(auxTo64F(c) == auxTo64F(d))
 		return true
 	}
 	// match: (Eq64F (Const64F [d]) (Const64F [c]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) == i2f(d))])
+	// result: (ConstBool [b2i(auxTo64F(c) == auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -10114,7 +10042,7 @@ func rewriteValuegeneric_OpEq64F_0(v *Value) bool {
 		}
 		c := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) == i2f(d))
+		v.AuxInt = b2i(auxTo64F(c) == auxTo64F(d))
 		return true
 	}
 	return false
@@ -11077,7 +11005,7 @@ func rewriteValuegeneric_OpGeq32_0(v *Value) bool {
 func rewriteValuegeneric_OpGeq32F_0(v *Value) bool {
 	// match: (Geq32F (Const32F [c]) (Const32F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) >= i2f(d))])
+	// result: (ConstBool [b2i(auxTo32F(c) >= auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -11091,7 +11019,7 @@ func rewriteValuegeneric_OpGeq32F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) >= i2f(d))
+		v.AuxInt = b2i(auxTo32F(c) >= auxTo32F(d))
 		return true
 	}
 	return false
@@ -11143,7 +11071,7 @@ func rewriteValuegeneric_OpGeq64_0(v *Value) bool {
 func rewriteValuegeneric_OpGeq64F_0(v *Value) bool {
 	// match: (Geq64F (Const64F [c]) (Const64F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) >= i2f(d))])
+	// result: (ConstBool [b2i(auxTo64F(c) >= auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -11157,7 +11085,7 @@ func rewriteValuegeneric_OpGeq64F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) >= i2f(d))
+		v.AuxInt = b2i(auxTo64F(c) >= auxTo64F(d))
 		return true
 	}
 	return false
@@ -11297,7 +11225,7 @@ func rewriteValuegeneric_OpGreater32_0(v *Value) bool {
 func rewriteValuegeneric_OpGreater32F_0(v *Value) bool {
 	// match: (Greater32F (Const32F [c]) (Const32F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) > i2f(d))])
+	// result: (ConstBool [b2i(auxTo32F(c) > auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -11311,7 +11239,7 @@ func rewriteValuegeneric_OpGreater32F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) > i2f(d))
+		v.AuxInt = b2i(auxTo32F(c) > auxTo32F(d))
 		return true
 	}
 	return false
@@ -11363,7 +11291,7 @@ func rewriteValuegeneric_OpGreater64_0(v *Value) bool {
 func rewriteValuegeneric_OpGreater64F_0(v *Value) bool {
 	// match: (Greater64F (Const64F [c]) (Const64F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) > i2f(d))])
+	// result: (ConstBool [b2i(auxTo64F(c) > auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -11377,7 +11305,7 @@ func rewriteValuegeneric_OpGreater64F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) > i2f(d))
+		v.AuxInt = b2i(auxTo64F(c) > auxTo64F(d))
 		return true
 	}
 	return false
@@ -12945,7 +12873,7 @@ func rewriteValuegeneric_OpLeq32_0(v *Value) bool {
 func rewriteValuegeneric_OpLeq32F_0(v *Value) bool {
 	// match: (Leq32F (Const32F [c]) (Const32F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) <= i2f(d))])
+	// result: (ConstBool [b2i(auxTo32F(c) <= auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -12959,7 +12887,7 @@ func rewriteValuegeneric_OpLeq32F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) <= i2f(d))
+		v.AuxInt = b2i(auxTo32F(c) <= auxTo32F(d))
 		return true
 	}
 	return false
@@ -13011,7 +12939,7 @@ func rewriteValuegeneric_OpLeq64_0(v *Value) bool {
 func rewriteValuegeneric_OpLeq64F_0(v *Value) bool {
 	// match: (Leq64F (Const64F [c]) (Const64F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) <= i2f(d))])
+	// result: (ConstBool [b2i(auxTo64F(c) <= auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -13025,7 +12953,7 @@ func rewriteValuegeneric_OpLeq64F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) <= i2f(d))
+		v.AuxInt = b2i(auxTo64F(c) <= auxTo64F(d))
 		return true
 	}
 	return false
@@ -13165,7 +13093,7 @@ func rewriteValuegeneric_OpLess32_0(v *Value) bool {
 func rewriteValuegeneric_OpLess32F_0(v *Value) bool {
 	// match: (Less32F (Const32F [c]) (Const32F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) < i2f(d))])
+	// result: (ConstBool [b2i(auxTo32F(c) < auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -13179,7 +13107,7 @@ func rewriteValuegeneric_OpLess32F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) < i2f(d))
+		v.AuxInt = b2i(auxTo32F(c) < auxTo32F(d))
 		return true
 	}
 	return false
@@ -13231,7 +13159,7 @@ func rewriteValuegeneric_OpLess64_0(v *Value) bool {
 func rewriteValuegeneric_OpLess64F_0(v *Value) bool {
 	// match: (Less64F (Const64F [c]) (Const64F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) < i2f(d))])
+	// result: (ConstBool [b2i(auxTo64F(c) < auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -13245,7 +13173,7 @@ func rewriteValuegeneric_OpLess64F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) < i2f(d))
+		v.AuxInt = b2i(auxTo64F(c) < auxTo64F(d))
 		return true
 	}
 	return false
@@ -13483,7 +13411,7 @@ func rewriteValuegeneric_OpLoad_0(v *Value) bool {
 	}
 	// match: (Load <t1> p1 (Store {t2} p2 (Const32 [x]) _))
 	// cond: isSamePtr(p1,p2) && sizeof(t2) == 4 && is32BitFloat(t1)
-	// result: (Const32F [f2i(float64(math.Float32frombits(uint32(x))))])
+	// result: (Const32F [auxFrom32F(math.Float32frombits(uint32(x)))])
 	for {
 		t1 := v.Type
 		_ = v.Args[1]
@@ -13504,7 +13432,7 @@ func rewriteValuegeneric_OpLoad_0(v *Value) bool {
 			break
 		}
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(float64(math.Float32frombits(uint32(x))))
+		v.AuxInt = auxFrom32F(math.Float32frombits(uint32(x)))
 		return true
 	}
 	// match: (Load <t1> p1 (Store {t2} p2 (Const64F [x]) _))
@@ -13535,7 +13463,7 @@ func rewriteValuegeneric_OpLoad_0(v *Value) bool {
 	}
 	// match: (Load <t1> p1 (Store {t2} p2 (Const32F [x]) _))
 	// cond: isSamePtr(p1,p2) && sizeof(t2) == 4 && is32BitInt(t1)
-	// result: (Const32 [int64(int32(math.Float32bits(float32(i2f(x)))))])
+	// result: (Const32 [int64(int32(math.Float32bits(auxTo32F(x))))])
 	for {
 		t1 := v.Type
 		_ = v.Args[1]
@@ -13556,7 +13484,7 @@ func rewriteValuegeneric_OpLoad_0(v *Value) bool {
 			break
 		}
 		v.reset(OpConst32)
-		v.AuxInt = int64(int32(math.Float32bits(float32(i2f(x)))))
+		v.AuxInt = int64(int32(math.Float32bits(auxTo32F(x))))
 		return true
 	}
 	// match: (Load <t1> op:(OffPtr [o1] p1) (Store {t2} p2 _ mem:(Zero [n] p3 _)))
@@ -18320,7 +18248,7 @@ func rewriteValuegeneric_OpMul32_10(v *Value) bool {
 func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 	// match: (Mul32F (Const32F [c]) (Const32F [d]))
 	// cond:
-	// result: (Const32F [f2i(float64(i2f32(c) * i2f32(d)))])
+	// result: (Const32F [auxFrom32F(auxTo32F(c) * auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -18334,12 +18262,12 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(float64(i2f32(c) * i2f32(d)))
+		v.AuxInt = auxFrom32F(auxTo32F(c) * auxTo32F(d))
 		return true
 	}
 	// match: (Mul32F (Const32F [d]) (Const32F [c]))
 	// cond:
-	// result: (Const32F [f2i(float64(i2f32(c) * i2f32(d)))])
+	// result: (Const32F [auxFrom32F(auxTo32F(c) * auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -18353,10 +18281,10 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		}
 		c := v_1.AuxInt
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(float64(i2f32(c) * i2f32(d)))
+		v.AuxInt = auxFrom32F(auxTo32F(c) * auxTo32F(d))
 		return true
 	}
-	// match: (Mul32F x (Const32F [f2i(1)]))
+	// match: (Mul32F x (Const32F [auxFrom64F(1)]))
 	// cond:
 	// result: x
 	for {
@@ -18366,7 +18294,7 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		if v_1.Op != OpConst32F {
 			break
 		}
-		if v_1.AuxInt != f2i(1) {
+		if v_1.AuxInt != auxFrom64F(1) {
 			break
 		}
 		v.reset(OpCopy)
@@ -18374,7 +18302,7 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		v.AddArg(x)
 		return true
 	}
-	// match: (Mul32F (Const32F [f2i(1)]) x)
+	// match: (Mul32F (Const32F [auxFrom64F(1)]) x)
 	// cond:
 	// result: x
 	for {
@@ -18383,7 +18311,7 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		if v_0.Op != OpConst32F {
 			break
 		}
-		if v_0.AuxInt != f2i(1) {
+		if v_0.AuxInt != auxFrom64F(1) {
 			break
 		}
 		x := v.Args[1]
@@ -18392,7 +18320,7 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		v.AddArg(x)
 		return true
 	}
-	// match: (Mul32F x (Const32F [f2i(-1)]))
+	// match: (Mul32F x (Const32F [auxFrom32F(-1)]))
 	// cond:
 	// result: (Neg32F x)
 	for {
@@ -18402,14 +18330,14 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		if v_1.Op != OpConst32F {
 			break
 		}
-		if v_1.AuxInt != f2i(-1) {
+		if v_1.AuxInt != auxFrom32F(-1) {
 			break
 		}
 		v.reset(OpNeg32F)
 		v.AddArg(x)
 		return true
 	}
-	// match: (Mul32F (Const32F [f2i(-1)]) x)
+	// match: (Mul32F (Const32F [auxFrom32F(-1)]) x)
 	// cond:
 	// result: (Neg32F x)
 	for {
@@ -18418,7 +18346,7 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		if v_0.Op != OpConst32F {
 			break
 		}
-		if v_0.AuxInt != f2i(-1) {
+		if v_0.AuxInt != auxFrom32F(-1) {
 			break
 		}
 		x := v.Args[1]
@@ -18426,7 +18354,7 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		v.AddArg(x)
 		return true
 	}
-	// match: (Mul32F x (Const32F [f2i(2)]))
+	// match: (Mul32F x (Const32F [auxFrom32F(2)]))
 	// cond:
 	// result: (Add32F x x)
 	for {
@@ -18436,7 +18364,7 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		if v_1.Op != OpConst32F {
 			break
 		}
-		if v_1.AuxInt != f2i(2) {
+		if v_1.AuxInt != auxFrom32F(2) {
 			break
 		}
 		v.reset(OpAdd32F)
@@ -18444,7 +18372,7 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		v.AddArg(x)
 		return true
 	}
-	// match: (Mul32F (Const32F [f2i(2)]) x)
+	// match: (Mul32F (Const32F [auxFrom32F(2)]) x)
 	// cond:
 	// result: (Add32F x x)
 	for {
@@ -18453,7 +18381,7 @@ func rewriteValuegeneric_OpMul32F_0(v *Value) bool {
 		if v_0.Op != OpConst32F {
 			break
 		}
-		if v_0.AuxInt != f2i(2) {
+		if v_0.AuxInt != auxFrom32F(2) {
 			break
 		}
 		x := v.Args[1]
@@ -19001,7 +18929,7 @@ func rewriteValuegeneric_OpMul64_10(v *Value) bool {
 func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 	// match: (Mul64F (Const64F [c]) (Const64F [d]))
 	// cond:
-	// result: (Const64F [f2i(i2f(c) * i2f(d))])
+	// result: (Const64F [auxFrom64F(auxTo64F(c) * auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -19015,12 +18943,12 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConst64F)
-		v.AuxInt = f2i(i2f(c) * i2f(d))
+		v.AuxInt = auxFrom64F(auxTo64F(c) * auxTo64F(d))
 		return true
 	}
 	// match: (Mul64F (Const64F [d]) (Const64F [c]))
 	// cond:
-	// result: (Const64F [f2i(i2f(c) * i2f(d))])
+	// result: (Const64F [auxFrom64F(auxTo64F(c) * auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -19034,10 +18962,10 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		}
 		c := v_1.AuxInt
 		v.reset(OpConst64F)
-		v.AuxInt = f2i(i2f(c) * i2f(d))
+		v.AuxInt = auxFrom64F(auxTo64F(c) * auxTo64F(d))
 		return true
 	}
-	// match: (Mul64F x (Const64F [f2i(1)]))
+	// match: (Mul64F x (Const64F [auxFrom64F(1)]))
 	// cond:
 	// result: x
 	for {
@@ -19047,7 +18975,7 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		if v_1.Op != OpConst64F {
 			break
 		}
-		if v_1.AuxInt != f2i(1) {
+		if v_1.AuxInt != auxFrom64F(1) {
 			break
 		}
 		v.reset(OpCopy)
@@ -19055,7 +18983,7 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		v.AddArg(x)
 		return true
 	}
-	// match: (Mul64F (Const64F [f2i(1)]) x)
+	// match: (Mul64F (Const64F [auxFrom64F(1)]) x)
 	// cond:
 	// result: x
 	for {
@@ -19064,7 +18992,7 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		if v_0.Op != OpConst64F {
 			break
 		}
-		if v_0.AuxInt != f2i(1) {
+		if v_0.AuxInt != auxFrom64F(1) {
 			break
 		}
 		x := v.Args[1]
@@ -19073,7 +19001,7 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		v.AddArg(x)
 		return true
 	}
-	// match: (Mul64F x (Const64F [f2i(-1)]))
+	// match: (Mul64F x (Const64F [auxFrom64F(-1)]))
 	// cond:
 	// result: (Neg64F x)
 	for {
@@ -19083,14 +19011,14 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		if v_1.Op != OpConst64F {
 			break
 		}
-		if v_1.AuxInt != f2i(-1) {
+		if v_1.AuxInt != auxFrom64F(-1) {
 			break
 		}
 		v.reset(OpNeg64F)
 		v.AddArg(x)
 		return true
 	}
-	// match: (Mul64F (Const64F [f2i(-1)]) x)
+	// match: (Mul64F (Const64F [auxFrom64F(-1)]) x)
 	// cond:
 	// result: (Neg64F x)
 	for {
@@ -19099,7 +19027,7 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		if v_0.Op != OpConst64F {
 			break
 		}
-		if v_0.AuxInt != f2i(-1) {
+		if v_0.AuxInt != auxFrom64F(-1) {
 			break
 		}
 		x := v.Args[1]
@@ -19107,7 +19035,7 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		v.AddArg(x)
 		return true
 	}
-	// match: (Mul64F x (Const64F [f2i(2)]))
+	// match: (Mul64F x (Const64F [auxFrom64F(2)]))
 	// cond:
 	// result: (Add64F x x)
 	for {
@@ -19117,7 +19045,7 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		if v_1.Op != OpConst64F {
 			break
 		}
-		if v_1.AuxInt != f2i(2) {
+		if v_1.AuxInt != auxFrom64F(2) {
 			break
 		}
 		v.reset(OpAdd64F)
@@ -19125,7 +19053,7 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		v.AddArg(x)
 		return true
 	}
-	// match: (Mul64F (Const64F [f2i(2)]) x)
+	// match: (Mul64F (Const64F [auxFrom64F(2)]) x)
 	// cond:
 	// result: (Add64F x x)
 	for {
@@ -19134,7 +19062,7 @@ func rewriteValuegeneric_OpMul64F_0(v *Value) bool {
 		if v_0.Op != OpConst64F {
 			break
 		}
-		if v_0.AuxInt != f2i(2) {
+		if v_0.AuxInt != auxFrom64F(2) {
 			break
 		}
 		x := v.Args[1]
@@ -19585,19 +19513,19 @@ func rewriteValuegeneric_OpNeg32_0(v *Value) bool {
 }
 func rewriteValuegeneric_OpNeg32F_0(v *Value) bool {
 	// match: (Neg32F (Const32F [c]))
-	// cond: i2f(c) != 0
-	// result: (Const32F [f2i(-i2f(c))])
+	// cond: auxTo32F(c) != 0
+	// result: (Const32F [auxFrom32F(-auxTo32F(c))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst32F {
 			break
 		}
 		c := v_0.AuxInt
-		if !(i2f(c) != 0) {
+		if !(auxTo32F(c) != 0) {
 			break
 		}
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(-i2f(c))
+		v.AuxInt = auxFrom32F(-auxTo32F(c))
 		return true
 	}
 	return false
@@ -19636,19 +19564,19 @@ func rewriteValuegeneric_OpNeg64_0(v *Value) bool {
 }
 func rewriteValuegeneric_OpNeg64F_0(v *Value) bool {
 	// match: (Neg64F (Const64F [c]))
-	// cond: i2f(c) != 0
-	// result: (Const64F [f2i(-i2f(c))])
+	// cond: auxTo64F(c) != 0
+	// result: (Const64F [auxFrom64F(-auxTo64F(c))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst64F {
 			break
 		}
 		c := v_0.AuxInt
-		if !(i2f(c) != 0) {
+		if !(auxTo64F(c) != 0) {
 			break
 		}
 		v.reset(OpConst64F)
-		v.AuxInt = f2i(-i2f(c))
+		v.AuxInt = auxFrom64F(-auxTo64F(c))
 		return true
 	}
 	return false
@@ -20164,7 +20092,7 @@ func rewriteValuegeneric_OpNeq32_0(v *Value) bool {
 func rewriteValuegeneric_OpNeq32F_0(v *Value) bool {
 	// match: (Neq32F (Const32F [c]) (Const32F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) != i2f(d))])
+	// result: (ConstBool [b2i(auxTo32F(c) != auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -20178,12 +20106,12 @@ func rewriteValuegeneric_OpNeq32F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) != i2f(d))
+		v.AuxInt = b2i(auxTo32F(c) != auxTo32F(d))
 		return true
 	}
 	// match: (Neq32F (Const32F [d]) (Const32F [c]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) != i2f(d))])
+	// result: (ConstBool [b2i(auxTo32F(c) != auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -20197,7 +20125,7 @@ func rewriteValuegeneric_OpNeq32F_0(v *Value) bool {
 		}
 		c := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) != i2f(d))
+		v.AuxInt = b2i(auxTo32F(c) != auxTo32F(d))
 		return true
 	}
 	return false
@@ -20443,7 +20371,7 @@ func rewriteValuegeneric_OpNeq64_0(v *Value) bool {
 func rewriteValuegeneric_OpNeq64F_0(v *Value) bool {
 	// match: (Neq64F (Const64F [c]) (Const64F [d]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) != i2f(d))])
+	// result: (ConstBool [b2i(auxTo64F(c) != auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -20457,12 +20385,12 @@ func rewriteValuegeneric_OpNeq64F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) != i2f(d))
+		v.AuxInt = b2i(auxTo64F(c) != auxTo64F(d))
 		return true
 	}
 	// match: (Neq64F (Const64F [d]) (Const64F [c]))
 	// cond:
-	// result: (ConstBool [b2i(i2f(c) != i2f(d))])
+	// result: (ConstBool [b2i(auxTo64F(c) != auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -20476,7 +20404,7 @@ func rewriteValuegeneric_OpNeq64F_0(v *Value) bool {
 		}
 		c := v_1.AuxInt
 		v.reset(OpConstBool)
-		v.AuxInt = b2i(i2f(c) != i2f(d))
+		v.AuxInt = b2i(auxTo64F(c) != auxTo64F(d))
 		return true
 	}
 	return false
@@ -21412,7 +21340,7 @@ func rewriteValuegeneric_OpNilCheck_0(v *Value) bool {
 		return true
 	}
 	// match: (NilCheck (Load (OffPtr [c] (SP)) (StaticCall {sym} _)) _)
-	// cond: isSameSym(sym, "runtime.newobject") && c == config.ctxt.FixedFrameSize() + config.RegSize && warnRule(fe.Debug_checknil() && v.Pos.Line() > 1, v, "removed nil check")
+	// cond: isSameSym(sym, "runtime.newobject") && c == config.ctxt.FixedFrameSize() + config.RegSize && warnRule(fe.Debug_checknil(), v, "removed nil check")
 	// result: (Invalid)
 	for {
 		_ = v.Args[1]
@@ -21435,14 +21363,14 @@ func rewriteValuegeneric_OpNilCheck_0(v *Value) bool {
 			break
 		}
 		sym := v_0_1.Aux
-		if !(isSameSym(sym, "runtime.newobject") && c == config.ctxt.FixedFrameSize()+config.RegSize && warnRule(fe.Debug_checknil() && v.Pos.Line() > 1, v, "removed nil check")) {
+		if !(isSameSym(sym, "runtime.newobject") && c == config.ctxt.FixedFrameSize()+config.RegSize && warnRule(fe.Debug_checknil(), v, "removed nil check")) {
 			break
 		}
 		v.reset(OpInvalid)
 		return true
 	}
 	// match: (NilCheck (OffPtr (Load (OffPtr [c] (SP)) (StaticCall {sym} _))) _)
-	// cond: isSameSym(sym, "runtime.newobject") && c == config.ctxt.FixedFrameSize() + config.RegSize && warnRule(fe.Debug_checknil() && v.Pos.Line() > 1, v, "removed nil check")
+	// cond: isSameSym(sym, "runtime.newobject") && c == config.ctxt.FixedFrameSize() + config.RegSize && warnRule(fe.Debug_checknil(), v, "removed nil check")
 	// result: (Invalid)
 	for {
 		_ = v.Args[1]
@@ -21469,7 +21397,7 @@ func rewriteValuegeneric_OpNilCheck_0(v *Value) bool {
 			break
 		}
 		sym := v_0_0_1.Aux
-		if !(isSameSym(sym, "runtime.newobject") && c == config.ctxt.FixedFrameSize()+config.RegSize && warnRule(fe.Debug_checknil() && v.Pos.Line() > 1, v, "removed nil check")) {
+		if !(isSameSym(sym, "runtime.newobject") && c == config.ctxt.FixedFrameSize()+config.RegSize && warnRule(fe.Debug_checknil(), v, "removed nil check")) {
 			break
 		}
 		v.reset(OpInvalid)
@@ -24905,6 +24833,32 @@ func rewriteValuegeneric_OpRsh16Ux64_0(v *Value) bool {
 		v.AddArg(v0)
 		return true
 	}
+	// match: (Rsh16Ux64 (Rsh16x64 x _) (Const64 <t> [15]))
+	// cond:
+	// result: (Rsh16Ux64 x (Const64 <t> [15]))
+	for {
+		_ = v.Args[1]
+		v_0 := v.Args[0]
+		if v_0.Op != OpRsh16x64 {
+			break
+		}
+		_ = v_0.Args[1]
+		x := v_0.Args[0]
+		v_1 := v.Args[1]
+		if v_1.Op != OpConst64 {
+			break
+		}
+		t := v_1.Type
+		if v_1.AuxInt != 15 {
+			break
+		}
+		v.reset(OpRsh16Ux64)
+		v.AddArg(x)
+		v0 := b.NewValue0(v.Pos, OpConst64, t)
+		v0.AuxInt = 15
+		v.AddArg(v0)
+		return true
+	}
 	// match: (Rsh16Ux64 (Lsh16x64 (Rsh16Ux64 x (Const64 [c1])) (Const64 [c2])) (Const64 [c3]))
 	// cond: uint64(c1) >= uint64(c2) && uint64(c3) >= uint64(c2) && !uaddOvf(c1-c2, c3)
 	// result: (Rsh16Ux64 x (Const64 <typ.UInt64> [c1-c2+c3]))
@@ -25446,6 +25400,32 @@ func rewriteValuegeneric_OpRsh32Ux64_0(v *Value) bool {
 		v.AddArg(x)
 		v0 := b.NewValue0(v.Pos, OpConst64, t)
 		v0.AuxInt = c + d
+		v.AddArg(v0)
+		return true
+	}
+	// match: (Rsh32Ux64 (Rsh32x64 x _) (Const64 <t> [31]))
+	// cond:
+	// result: (Rsh32Ux64 x (Const64 <t> [31]))
+	for {
+		_ = v.Args[1]
+		v_0 := v.Args[0]
+		if v_0.Op != OpRsh32x64 {
+			break
+		}
+		_ = v_0.Args[1]
+		x := v_0.Args[0]
+		v_1 := v.Args[1]
+		if v_1.Op != OpConst64 {
+			break
+		}
+		t := v_1.Type
+		if v_1.AuxInt != 31 {
+			break
+		}
+		v.reset(OpRsh32Ux64)
+		v.AddArg(x)
+		v0 := b.NewValue0(v.Pos, OpConst64, t)
+		v0.AuxInt = 31
 		v.AddArg(v0)
 		return true
 	}
@@ -26052,6 +26032,32 @@ func rewriteValuegeneric_OpRsh64Ux64_0(v *Value) bool {
 		v.AddArg(x)
 		v0 := b.NewValue0(v.Pos, OpConst64, t)
 		v0.AuxInt = c + d
+		v.AddArg(v0)
+		return true
+	}
+	// match: (Rsh64Ux64 (Rsh64x64 x _) (Const64 <t> [63]))
+	// cond:
+	// result: (Rsh64Ux64 x (Const64 <t> [63]))
+	for {
+		_ = v.Args[1]
+		v_0 := v.Args[0]
+		if v_0.Op != OpRsh64x64 {
+			break
+		}
+		_ = v_0.Args[1]
+		x := v_0.Args[0]
+		v_1 := v.Args[1]
+		if v_1.Op != OpConst64 {
+			break
+		}
+		t := v_1.Type
+		if v_1.AuxInt != 63 {
+			break
+		}
+		v.reset(OpRsh64Ux64)
+		v.AddArg(x)
+		v0 := b.NewValue0(v.Pos, OpConst64, t)
+		v0.AuxInt = 63
 		v.AddArg(v0)
 		return true
 	}
@@ -26720,6 +26726,32 @@ func rewriteValuegeneric_OpRsh8Ux64_0(v *Value) bool {
 		v.AddArg(x)
 		v0 := b.NewValue0(v.Pos, OpConst64, t)
 		v0.AuxInt = c + d
+		v.AddArg(v0)
+		return true
+	}
+	// match: (Rsh8Ux64 (Rsh8x64 x _) (Const64 <t> [7]))
+	// cond:
+	// result: (Rsh8Ux64 x (Const64 <t> [7] ))
+	for {
+		_ = v.Args[1]
+		v_0 := v.Args[0]
+		if v_0.Op != OpRsh8x64 {
+			break
+		}
+		_ = v_0.Args[1]
+		x := v_0.Args[0]
+		v_1 := v.Args[1]
+		if v_1.Op != OpConst64 {
+			break
+		}
+		t := v_1.Type
+		if v_1.AuxInt != 7 {
+			break
+		}
+		v.reset(OpRsh8Ux64)
+		v.AddArg(x)
+		v0 := b.NewValue0(v.Pos, OpConst64, t)
+		v0.AuxInt = 7
 		v.AddArg(v0)
 		return true
 	}
@@ -27497,7 +27529,7 @@ func rewriteValuegeneric_OpSlicemask_0(v *Value) bool {
 func rewriteValuegeneric_OpSqrt_0(v *Value) bool {
 	// match: (Sqrt (Const64F [c]))
 	// cond:
-	// result: (Const64F [f2i(math.Sqrt(i2f(c)))])
+	// result: (Const64F [auxFrom64F(math.Sqrt(auxTo64F(c)))])
 	for {
 		v_0 := v.Args[0]
 		if v_0.Op != OpConst64F {
@@ -27505,7 +27537,7 @@ func rewriteValuegeneric_OpSqrt_0(v *Value) bool {
 		}
 		c := v_0.AuxInt
 		v.reset(OpConst64F)
-		v.AuxInt = f2i(math.Sqrt(i2f(c)))
+		v.AuxInt = auxFrom64F(math.Sqrt(auxTo64F(c)))
 		return true
 	}
 	return false
@@ -27593,6 +27625,20 @@ func rewriteValuegeneric_OpStaticCall_0(v *Value) bool {
 		v.AddArg(dst)
 		v.AddArg(src)
 		v.AddArg(mem)
+		return true
+	}
+	// match: (StaticCall {sym} x)
+	// cond: needRaceCleanup(sym,v)
+	// result: x
+	for {
+		sym := v.Aux
+		x := v.Args[0]
+		if !(needRaceCleanup(sym, v)) {
+			break
+		}
+		v.reset(OpCopy)
+		v.Type = x.Type
+		v.AddArg(x)
 		return true
 	}
 	return false
@@ -29706,7 +29752,7 @@ func rewriteValuegeneric_OpSub32_10(v *Value) bool {
 func rewriteValuegeneric_OpSub32F_0(v *Value) bool {
 	// match: (Sub32F (Const32F [c]) (Const32F [d]))
 	// cond:
-	// result: (Const32F [f2i(float64(i2f32(c) - i2f32(d)))])
+	// result: (Const32F [auxFrom32F(auxTo32F(c) - auxTo32F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -29720,25 +29766,7 @@ func rewriteValuegeneric_OpSub32F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConst32F)
-		v.AuxInt = f2i(float64(i2f32(c) - i2f32(d)))
-		return true
-	}
-	// match: (Sub32F x (Const32F [0]))
-	// cond:
-	// result: x
-	for {
-		_ = v.Args[1]
-		x := v.Args[0]
-		v_1 := v.Args[1]
-		if v_1.Op != OpConst32F {
-			break
-		}
-		if v_1.AuxInt != 0 {
-			break
-		}
-		v.reset(OpCopy)
-		v.Type = x.Type
-		v.AddArg(x)
+		v.AuxInt = auxFrom32F(auxTo32F(c) - auxTo32F(d))
 		return true
 	}
 	return false
@@ -30130,7 +30158,7 @@ func rewriteValuegeneric_OpSub64_10(v *Value) bool {
 func rewriteValuegeneric_OpSub64F_0(v *Value) bool {
 	// match: (Sub64F (Const64F [c]) (Const64F [d]))
 	// cond:
-	// result: (Const64F [f2i(i2f(c) - i2f(d))])
+	// result: (Const64F [auxFrom64F(auxTo64F(c) - auxTo64F(d))])
 	for {
 		_ = v.Args[1]
 		v_0 := v.Args[0]
@@ -30144,25 +30172,7 @@ func rewriteValuegeneric_OpSub64F_0(v *Value) bool {
 		}
 		d := v_1.AuxInt
 		v.reset(OpConst64F)
-		v.AuxInt = f2i(i2f(c) - i2f(d))
-		return true
-	}
-	// match: (Sub64F x (Const64F [0]))
-	// cond:
-	// result: x
-	for {
-		_ = v.Args[1]
-		x := v.Args[0]
-		v_1 := v.Args[1]
-		if v_1.Op != OpConst64F {
-			break
-		}
-		if v_1.AuxInt != 0 {
-			break
-		}
-		v.reset(OpCopy)
-		v.Type = x.Type
-		v.AddArg(x)
+		v.AuxInt = auxFrom64F(auxTo64F(c) - auxTo64F(d))
 		return true
 	}
 	return false

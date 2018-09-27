@@ -64,6 +64,9 @@ var (
 	valueGlobal    = predefValue(5)
 	memory         = predefValue(6) // WebAssembly linear memory
 	jsGo           = predefValue(7) // instance of the Go class in JavaScript
+
+	objectConstructor = valueGlobal.Get("Object")
+	arrayConstructor  = valueGlobal.Get("Array")
 )
 
 // Undefined returns the JavaScript value "undefined".
@@ -83,15 +86,17 @@ func Global() Value {
 
 // ValueOf returns x as a JavaScript value:
 //
-//  | Go                    | JavaScript            |
-//  | --------------------- | --------------------- |
-//  | js.Value              | [its value]           |
-//  | js.TypedArray         | [typed array]         |
-//  | js.Callback           | function              |
-//  | nil                   | null                  |
-//  | bool                  | boolean               |
-//  | integers and floats   | number                |
-//  | string                | string                |
+//  | Go                     | JavaScript             |
+//  | ---------------------- | ---------------------- |
+//  | js.Value               | [its value]            |
+//  | js.TypedArray          | typed array            |
+//  | js.Callback            | function               |
+//  | nil                    | null                   |
+//  | bool                   | boolean                |
+//  | integers and floats    | number                 |
+//  | string                 | string                 |
+//  | []interface{}          | new array              |
+//  | map[string]interface{} | new object             |
 func ValueOf(x interface{}) Value {
 	switch x := x.(type) {
 	case Value:
@@ -138,6 +143,18 @@ func ValueOf(x interface{}) Value {
 		return floatValue(x)
 	case string:
 		return makeValue(stringVal(x))
+	case []interface{}:
+		a := arrayConstructor.New(len(x))
+		for i, s := range x {
+			a.SetIndex(i, s)
+		}
+		return a
+	case map[string]interface{}:
+		o := objectConstructor.New()
+		for k, v := range x {
+			o.Set(k, v)
+		}
+		return o
 	default:
 		panic("ValueOf: invalid value")
 	}
@@ -216,7 +233,7 @@ func (v Value) Get(p string) Value {
 
 func valueGet(v ref, p string) ref
 
-// Set sets the JavaScript property p of value v to x.
+// Set sets the JavaScript property p of value v to ValueOf(x).
 func (v Value) Set(p string, x interface{}) {
 	valueSet(v.ref, p, ValueOf(x).ref)
 }
@@ -230,7 +247,7 @@ func (v Value) Index(i int) Value {
 
 func valueIndex(v ref, i int) ref
 
-// SetIndex sets the JavaScript index i of value v to x.
+// SetIndex sets the JavaScript index i of value v to ValueOf(x).
 func (v Value) SetIndex(i int, x interface{}) {
 	valueSetIndex(v.ref, i, ValueOf(x).ref)
 }
@@ -254,6 +271,7 @@ func valueLength(v ref) int
 
 // Call does a JavaScript call to the method m of value v with the given arguments.
 // It panics if v has no method m.
+// The arguments get mapped to JavaScript values according to the ValueOf function.
 func (v Value) Call(m string, args ...interface{}) Value {
 	res, ok := valueCall(v.ref, m, makeArgs(args))
 	if !ok {
@@ -272,6 +290,7 @@ func valueCall(v ref, m string, args []ref) (ref, bool)
 
 // Invoke does a JavaScript call of the value v with the given arguments.
 // It panics if v is not a function.
+// The arguments get mapped to JavaScript values according to the ValueOf function.
 func (v Value) Invoke(args ...interface{}) Value {
 	res, ok := valueInvoke(v.ref, makeArgs(args))
 	if !ok {
@@ -287,6 +306,7 @@ func valueInvoke(v ref, args []ref) (ref, bool)
 
 // New uses JavaScript's "new" operator with value v as constructor and the given arguments.
 // It panics if v is not a function.
+// The arguments get mapped to JavaScript values according to the ValueOf function.
 func (v Value) New(args ...interface{}) Value {
 	res, ok := valueNew(v.ref, makeArgs(args))
 	if !ok {

@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-var raceEnabled = false // set by race.go
-
 // A Header represents the key-value pairs in an HTTP header.
 type Header map[string][]string
 
@@ -230,14 +228,4 @@ func hasToken(v, token string) bool {
 
 func isTokenBoundary(b byte) bool {
 	return b == ' ' || b == ',' || b == '\t'
-}
-
-func cloneHeader(h Header) Header {
-	h2 := make(Header, len(h))
-	for k, vv := range h {
-		vv2 := make([]string, len(vv))
-		copy(vv2, vv)
-		h2[k] = vv2
-	}
-	return h2
 }

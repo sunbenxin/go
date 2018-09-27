@@ -55,7 +55,7 @@ func (d *dataIO) big4() (n uint32, ok bool) {
 		d.error = true
 		return 0, false
 	}
-	return uint32(p[0])<<24 | uint32(p[1])<<16 | uint32(p[2])<<8 | uint32(p[3]), true
+	return uint32(p[3]) | uint32(p[2])<<8 | uint32(p[1])<<16 | uint32(p[0])<<24, true
 }
 
 func (d *dataIO) byte() (n byte, ok bool) {
@@ -364,7 +364,7 @@ func loadTzinfoFromZip(zipfile, name string) ([]byte, error) {
 		return buf, nil
 	}
 
-	return nil, errors.New("cannot find " + name + " in zip file " + zipfile)
+	return nil, syscall.ENOENT
 }
 
 // loadTzinfoFromTzdata returns the time zone information of the time zone

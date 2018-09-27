@@ -208,9 +208,11 @@ func Main(arch *sys.Arch, theArch Arch) {
 
 	ctxt.dostrdata()
 	deadcode(ctxt)
+	dwarfGenerateDebugInfo(ctxt)
 	if objabi.Fieldtrack_enabled != 0 {
 		fieldtrack(ctxt)
 	}
+	ctxt.mangleTypeSym()
 	ctxt.callgraph()
 
 	ctxt.doelf()

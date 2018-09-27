@@ -180,6 +180,13 @@ func (p *Package) Translate(f *File) {
 		if len(needType) > 0 {
 			p.loadDWARF(f, needType)
 		}
+
+		// In godefs mode we're OK with the typedefs, which
+		// will presumably also be defined in the file, we
+		// don't want to resolve them to their base types.
+		if *godefs {
+			break
+		}
 	}
 	if p.rewriteCalls(f) {
 		// Add `import _cgo_unsafe "unsafe"` after the package statement.
@@ -645,6 +652,10 @@ func (p *Package) recordTypedefs1(dtype dwarf.Type, visited map[dwarf.Type]bool)
 	visited[dtype] = true
 	switch dt := dtype.(type) {
 	case *dwarf.TypedefType:
+		if strings.HasPrefix(dt.Name, "__builtin") {
+			// Don't look inside builtin types. There be dragons.
+			return
+		}
 		if !p.typedefs[dt.Name] {
 			p.typedefs[dt.Name] = true
 			p.typedefList = append(p.typedefList, dt.Name)
@@ -1682,6 +1693,9 @@ func (p *Package) gccErrors(stdin []byte) string {
 		}
 	}
 
+	// Force -O0 optimization
+	nargs = append(nargs, "-O0")
+
 	if *debugGcc {
 		fmt.Fprintf(os.Stderr, "$ %s <<EOF\n", strings.Join(nargs, " "))
 		os.Stderr.Write(stdin)
@@ -1728,6 +1742,7 @@ type typeConv struct {
 	// Map from types to incomplete pointers to those types.
 	ptrs map[dwarf.Type][]*Type
 	// Keys of ptrs in insertion order (deterministic worklist)
+	// ptrKeys contains exactly the keys in ptrs.
 	ptrKeys []dwarf.Type
 
 	// Type names X for which there exists an XGetTypeID function with type func() CFTypeID.
@@ -1870,14 +1885,15 @@ func (c *typeConv) FinishType(pos token.Pos) {
 	for len(c.ptrKeys) > 0 {
 		dtype := c.ptrKeys[0]
 		c.ptrKeys = c.ptrKeys[1:]
+		ptrs := c.ptrs[dtype]
+		delete(c.ptrs, dtype)
 
 		// Note Type might invalidate c.ptrs[dtype].
 		t := c.Type(dtype, pos)
-		for _, ptr := range c.ptrs[dtype] {
+		for _, ptr := range ptrs {
 			ptr.Go.(*ast.StarExpr).X = t.Go
 			ptr.C.Set("%s*", t.C)
 		}
-		c.ptrs[dtype] = nil // retain the map key
 	}
 }
 

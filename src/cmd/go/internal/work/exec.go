@@ -224,7 +224,9 @@ func (b *Builder) buildActionID(a *Action) cache.ActionID {
 		if len(p.SFiles) > 0 {
 			fmt.Fprintf(h, "asm %q %q %q\n", b.toolID("asm"), forcedAsmflags, p.Internal.Asmflags)
 		}
-		fmt.Fprintf(h, "GO$GOARCH=%s\n", os.Getenv("GO"+strings.ToUpper(cfg.BuildContext.GOARCH))) // GO386, GOARM, etc
+		// GO386, GOARM, GOMIPS, etc.
+		baseArch := strings.TrimSuffix(cfg.BuildContext.GOARCH, "le")
+		fmt.Fprintf(h, "GO$GOARCH=%s\n", os.Getenv("GO"+strings.ToUpper(baseArch)))
 
 		// TODO(rsc): Convince compiler team not to add more magic environment variables,
 		// or perhaps restrict the environment variables passed to subprocesses.
@@ -320,11 +322,32 @@ func (b *Builder) needCgoHdr(a *Action) bool {
 	return false
 }
 
+// allowedVersion reports whether the version v is an allowed version of go
+// (one that we can compile).
+// v is known to be of the form "1.23".
+func allowedVersion(v string) bool {
+	// Special case: no requirement.
+	if v == "" {
+		return true
+	}
+	// Special case "1.0" means "go1", which is OK.
+	if v == "1.0" {
+		return true
+	}
+	// Otherwise look through release tags of form "go1.23" for one that matches.
+	for _, tag := range cfg.BuildContext.ReleaseTags {
+		if strings.HasPrefix(tag, "go") && tag[2:] == v {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	needBuild uint32 = 1 << iota
 	needCgoHdr
 	needVet
-	needCgoFiles
+	needCompiledGoFiles
 	needStale
 )
 
@@ -344,10 +367,7 @@ func (b *Builder) build(a *Action) (err error) {
 	need := bit(needBuild, !b.IsCmdList || b.NeedExport) |
 		bit(needCgoHdr, b.needCgoHdr(a)) |
 		bit(needVet, a.needVet) |
-		bit(needCgoFiles, b.NeedCgoFiles && (p.UsesCgo() || p.UsesSwig()))
-
-	// Save p.CgoFiles now, because we may modify it for go list.
-	cgofiles := append([]string{}, p.CgoFiles...)
+		bit(needCompiledGoFiles, b.NeedCompiledGoFiles)
 
 	if !p.BinaryOnly {
 		if b.useCache(a, p, b.buildActionID(a), p.Target) {
@@ -357,8 +377,8 @@ func (b *Builder) build(a *Action) (err error) {
 			if b.NeedExport {
 				p.Export = a.built
 			}
-			if need&needCgoFiles != 0 && b.loadCachedCgoFiles(a) {
-				need &^= needCgoFiles
+			if need&needCompiledGoFiles != 0 && b.loadCachedGoFiles(a) {
+				need &^= needCompiledGoFiles
 			}
 			// Otherwise, we need to write files to a.Objdir (needVet, needCgoHdr).
 			// Remember that we might have them in cache
@@ -411,7 +431,11 @@ func (b *Builder) build(a *Action) (err error) {
 		if b.IsCmdList {
 			return nil
 		}
-		return fmt.Errorf("missing or invalid binary-only package")
+		return fmt.Errorf("missing or invalid binary-only package; expected file %q", a.Package.Target)
+	}
+
+	if p.Module != nil && !allowedVersion(p.Module.GoVersion) {
+		return fmt.Errorf("module requires Go %s", p.Module.GoVersion)
 	}
 
 	if err := b.Mkdir(a.Objdir); err != nil {
@@ -444,11 +468,12 @@ func (b *Builder) build(a *Action) (err error) {
 		}
 	}
 
-	var gofiles, cfiles, sfiles, cxxfiles, objects, cgoObjects, pcCFLAGS, pcLDFLAGS []string
-	gofiles = append(gofiles, a.Package.GoFiles...)
-	cfiles = append(cfiles, a.Package.CFiles...)
-	sfiles = append(sfiles, a.Package.SFiles...)
-	cxxfiles = append(cxxfiles, a.Package.CXXFiles...)
+	gofiles := str.StringList(a.Package.GoFiles)
+	cgofiles := str.StringList(a.Package.CgoFiles)
+	cfiles := str.StringList(a.Package.CFiles)
+	sfiles := str.StringList(a.Package.SFiles)
+	cxxfiles := str.StringList(a.Package.CXXFiles)
+	var objects, cgoObjects, pcCFLAGS, pcLDFLAGS []string
 
 	if a.Package.UsesCgo() || a.Package.UsesSwig() {
 		if pcCFLAGS, pcLDFLAGS, err = b.getPkgConfigFlags(a.Package); err != nil {
@@ -569,11 +594,11 @@ func (b *Builder) build(a *Action) (err error) {
 		buildVetConfig(a, gofiles)
 		need &^= needVet
 	}
-	if need&needCgoFiles != 0 {
-		if !b.loadCachedCgoFiles(a) {
-			return fmt.Errorf("failed to cache translated CgoFiles")
+	if need&needCompiledGoFiles != 0 {
+		if !b.loadCachedGoFiles(a) {
+			return fmt.Errorf("failed to cache compiled Go files")
 		}
-		need &^= needCgoFiles
+		need &^= needCompiledGoFiles
 	}
 	if need == 0 {
 		// Nothing left to do.
@@ -811,7 +836,7 @@ func (b *Builder) loadCachedVet(a *Action) bool {
 	return true
 }
 
-func (b *Builder) loadCachedCgoFiles(a *Action) bool {
+func (b *Builder) loadCachedGoFiles(a *Action) bool {
 	c := cache.Default()
 	if c == nil {
 		return false
@@ -826,6 +851,7 @@ func (b *Builder) loadCachedCgoFiles(a *Action) bool {
 			continue
 		}
 		if strings.HasPrefix(name, "./") {
+			files = append(files, name[len("./"):])
 			continue
 		}
 		file, err := b.findCachedObjdirFile(a, c, name)
@@ -834,7 +860,7 @@ func (b *Builder) loadCachedCgoFiles(a *Action) bool {
 		}
 		files = append(files, file)
 	}
-	a.Package.CgoFiles = files
+	a.Package.CompiledGoFiles = files
 	return true
 }
 
@@ -1131,11 +1157,11 @@ func (b *Builder) link(a *Action) (err error) {
 	// We still call updateBuildID to update a.buildID, which is important
 	// for test result caching, but passing rewrite=false (final arg)
 	// means we don't actually rewrite the binary, nor store the
-	// result into the cache.
-	// Not calling updateBuildID means we also don't insert these
-	// binaries into the build object cache. That's probably a net win:
+	// result into the cache. That's probably a net win:
 	// less cache space wasted on large binaries we are not likely to
 	// need again. (On the other hand it does make repeated go test slower.)
+	// It also makes repeated go run slower, which is a win in itself:
+	// we don't want people to treat go run like a scripting environment.
 	if err := b.updateBuildID(a, a.Target, !a.Package.Internal.OmitDebug); err != nil {
 		return err
 	}
@@ -2834,7 +2860,7 @@ func useResponseFile(path string, argLen int) bool {
 	}
 
 	// On the Go build system, use response files about 10% of the
-	// time, just to excercise this codepath.
+	// time, just to exercise this codepath.
 	isBuilder := os.Getenv("GO_BUILDER_NAME") != ""
 	if isBuilder && rand.Intn(10) == 0 {
 		return true

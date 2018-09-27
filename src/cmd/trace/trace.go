@@ -220,7 +220,7 @@ func httpJsonTrace(w http.ResponseWriter, r *http.Request) {
 		params.startTime = task.firstTimestamp() - 1
 		params.endTime = task.lastTimestamp() + 1
 		params.maing = goid
-		params.tasks = task.decendents()
+		params.tasks = task.descendants()
 		gs := map[uint64]bool{}
 		for _, t := range params.tasks {
 			// find only directly involved goroutines
@@ -244,7 +244,7 @@ func httpJsonTrace(w http.ResponseWriter, r *http.Request) {
 		params.mode = modeTaskOriented
 		params.startTime = task.firstTimestamp() - 1
 		params.endTime = task.lastTimestamp() + 1
-		params.tasks = task.decendents()
+		params.tasks = task.descendants()
 	}
 
 	start := int64(0)
@@ -685,13 +685,14 @@ func generateTrace(params *traceParams, consumer traceConsumer) error {
 			}
 			ctx.emitSlice(&fakeMarkStart, text)
 		case trace.EvGCSweepStart:
-			slice := ctx.emitSlice(ev, "SWEEP")
+			slice := ctx.makeSlice(ev, "SWEEP")
 			if done := ev.Link; done != nil && done.Args[0] != 0 {
 				slice.Arg = struct {
 					Swept     uint64 `json:"Swept bytes"`
 					Reclaimed uint64 `json:"Reclaimed bytes"`
 				}{done.Args[0], done.Args[1]}
 			}
+			ctx.emit(slice)
 		case trace.EvGoStart, trace.EvGoStartLabel:
 			info := getGInfo(ev.G)
 			if ev.Type == trace.EvGoStartLabel {
@@ -846,7 +847,11 @@ func (ctx *traceContext) proc(ev *trace.Event) uint64 {
 	}
 }
 
-func (ctx *traceContext) emitSlice(ev *trace.Event, name string) *ViewerEvent {
+func (ctx *traceContext) emitSlice(ev *trace.Event, name string) {
+	ctx.emit(ctx.makeSlice(ev, name))
+}
+
+func (ctx *traceContext) makeSlice(ev *trace.Event, name string) *ViewerEvent {
 	// If ViewerEvent.Dur is not a positive value,
 	// trace viewer handles it as a non-terminating time interval.
 	// Avoid it by setting the field with a small value.
@@ -885,7 +890,6 @@ func (ctx *traceContext) emitSlice(ev *trace.Event, name string) *ViewerEvent {
 			sl.Cname = colorLightGrey
 		}
 	}
-	ctx.emit(sl)
 	return sl
 }
 

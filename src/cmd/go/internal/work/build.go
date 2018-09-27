@@ -22,7 +22,7 @@ import (
 )
 
 var CmdBuild = &base.Command{
-	UsageLine: "build [-o output] [-i] [build flags] [packages]",
+	UsageLine: "go build [-o output] [-i] [build flags] [packages]",
 	Short:     "compile packages and dependencies",
 	Long: `
 Build compiles the packages named by the import paths,
@@ -86,8 +86,6 @@ and test commands:
 		arguments to pass on each gccgo compiler/linker invocation.
 	-gcflags '[pattern=]arg list'
 		arguments to pass on each go tool compile invocation.
-	-getmode mode
-		module download mode to use. See 'go help modules' for more.
 	-installsuffix suffix
 		a suffix to use in the name of the package installation directory,
 		in order to keep output separate from default builds.
@@ -100,6 +98,9 @@ and test commands:
 	-linkshared
 		link against shared libraries previously created with
 		-buildmode=shared.
+	-mod mode
+		module download mode to use: readonly or vendor.
+		See 'go help modules' for more.
 	-pkgdir dir
 		install and load all packages from dir instead of the usual locations.
 		For example, when building with a non-standard configuration,
@@ -220,7 +221,7 @@ func AddBuildFlags(cmd *base.Command) {
 	cmd.Flag.StringVar(&cfg.BuildBuildmode, "buildmode", "default", "")
 	cmd.Flag.Var(&load.BuildGcflags, "gcflags", "")
 	cmd.Flag.Var(&load.BuildGccgoflags, "gccgoflags", "")
-	cmd.Flag.StringVar(&cfg.BuildGetmode, "getmode", "", "")
+	cmd.Flag.StringVar(&cfg.BuildMod, "mod", "", "")
 	cmd.Flag.StringVar(&cfg.BuildContext.InstallSuffix, "installsuffix", "", "")
 	cmd.Flag.Var(&load.BuildLdflags, "ldflags", "")
 	cmd.Flag.BoolVar(&cfg.BuildLinkshared, "linkshared", false, "")
@@ -341,7 +342,7 @@ func runBuild(cmd *base.Command, args []string) {
 }
 
 var CmdInstall = &base.Command{
-	UsageLine: "install [-i] [build flags] [packages]",
+	UsageLine: "go install [-i] [build flags] [packages]",
 	Short:     "compile and install packages and dependencies",
 	Long: `
 Install compiles and installs the packages named by the import paths.
@@ -413,7 +414,7 @@ func libname(args []string, pkgs []*load.Package) (string, error) {
 
 func runInstall(cmd *base.Command, args []string) {
 	BuildInit()
-	InstallPackages(args)
+	InstallPackages(args, load.PackagesForBuild(args))
 }
 
 // omitTestOnly returns pkgs with test-only packages removed.
@@ -433,12 +434,12 @@ func omitTestOnly(pkgs []*load.Package) []*load.Package {
 	return list
 }
 
-func InstallPackages(args []string) {
+func InstallPackages(patterns []string, pkgs []*load.Package) {
 	if cfg.GOBIN != "" && !filepath.IsAbs(cfg.GOBIN) {
 		base.Fatalf("cannot install, GOBIN must be an absolute path")
 	}
 
-	pkgs := omitTestOnly(pkgsFilter(load.PackagesForBuild(args)))
+	pkgs = omitTestOnly(pkgsFilter(pkgs))
 	for _, p := range pkgs {
 		if p.Target == "" {
 			switch {
@@ -499,7 +500,7 @@ func InstallPackages(args []string) {
 		// tools above did not apply, and a is just a simple Action
 		// with a list of Deps, one per package named in pkgs,
 		// the same as in runBuild.
-		a = b.buildmodeShared(ModeInstall, ModeInstall, args, pkgs, a)
+		a = b.buildmodeShared(ModeInstall, ModeInstall, patterns, pkgs, a)
 	}
 
 	b.Do(a)
@@ -514,7 +515,7 @@ func InstallPackages(args []string) {
 	// One way to view this behavior is that it is as if 'go install' first
 	// runs 'go build' and the moves the generated file to the install dir.
 	// See issue 9645.
-	if len(args) == 0 && len(pkgs) == 1 && pkgs[0].Name == "main" {
+	if len(patterns) == 0 && len(pkgs) == 1 && pkgs[0].Name == "main" {
 		// Compute file 'go build' would have created.
 		// If it exists and is an executable file, remove it.
 		_, targ := filepath.Split(pkgs[0].ImportPath)

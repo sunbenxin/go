@@ -55,9 +55,12 @@ type Repo interface {
 // A Rev describes a single revision in a module repository.
 type RevInfo struct {
 	Version string    // version string
-	Name    string    // complete ID in underlying repository
-	Short   string    // shortened ID, for use in pseudo-version
 	Time    time.Time // commit time
+
+	// These fields are used for Stat of arbitrary rev,
+	// but they are not recorded when talking about module versions.
+	Name  string `json:"-"` // complete ID in underlying repository
+	Short string `json:"-"` // shortened ID, for use in pseudo-version
 }
 
 // Re: module paths, import paths, repository roots, and lookups
@@ -203,14 +206,21 @@ func Lookup(path string) (Repo, error) {
 
 // lookup returns the module with the given module path.
 func lookup(path string) (r Repo, err error) {
-	if cfg.BuildGetmode != "" {
-		return nil, fmt.Errorf("module lookup disabled by -getmode=%s", cfg.BuildGetmode)
+	if cfg.BuildMod == "vendor" {
+		return nil, fmt.Errorf("module lookup disabled by -mod=%s", cfg.BuildMod)
 	}
-	if proxyURL != "" {
+	if proxyURL == "off" {
+		return nil, fmt.Errorf("module lookup disabled by GOPROXY=%s", proxyURL)
+	}
+	if proxyURL != "" && proxyURL != "direct" {
 		return lookupProxy(path)
 	}
 
-	rr, err := get.RepoRootForImportPath(path, get.PreferMod, web.Secure)
+	security := web.Secure
+	if get.Insecure {
+		security = web.Insecure
+	}
+	rr, err := get.RepoRootForImportPath(path, get.PreferMod, security)
 	if err != nil {
 		// We don't know where to find code for a module with this path.
 		return nil, err
@@ -231,6 +241,9 @@ func lookup(path string) (r Repo, err error) {
 func lookupCodeRepo(rr *get.RepoRoot) (codehost.Repo, error) {
 	code, err := codehost.NewRepo(rr.VCS, rr.Repo)
 	if err != nil {
+		if _, ok := err.(*codehost.VCSError); ok {
+			return nil, err
+		}
 		return nil, fmt.Errorf("lookup %s: %v", rr.Root, err)
 	}
 	return code, nil
@@ -241,14 +254,18 @@ func lookupCodeRepo(rr *get.RepoRoot) (codehost.Repo, error) {
 // the original "go get" would have used, at the specific repository revision
 // (typically a commit hash, but possibly also a source control tag).
 func ImportRepoRev(path, rev string) (Repo, *RevInfo, error) {
-	if cfg.BuildGetmode != "" {
-		return nil, nil, fmt.Errorf("repo version lookup disabled by -getmode=%s", cfg.BuildGetmode)
+	if cfg.BuildMod == "vendor" || cfg.BuildMod == "readonly" {
+		return nil, nil, fmt.Errorf("repo version lookup disabled by -mod=%s", cfg.BuildMod)
 	}
 
 	// Note: Because we are converting a code reference from a legacy
 	// version control system, we ignore meta tags about modules
 	// and use only direct source control entries (get.IgnoreMod).
-	rr, err := get.RepoRootForImportPath(path, get.IgnoreMod, web.Secure)
+	security := web.Secure
+	if get.Insecure {
+		security = web.Insecure
+	}
+	rr, err := get.RepoRootForImportPath(path, get.IgnoreMod, security)
 	if err != nil {
 		return nil, nil, err
 	}

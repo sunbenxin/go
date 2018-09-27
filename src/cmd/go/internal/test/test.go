@@ -27,6 +27,7 @@ import (
 	"cmd/go/internal/cache"
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/load"
+	"cmd/go/internal/modload"
 	"cmd/go/internal/str"
 	"cmd/go/internal/work"
 	"cmd/internal/test2json"
@@ -37,7 +38,7 @@ func init() {
 	CmdTest.Run = runTest
 }
 
-const testUsage = "test [build/test flags] [packages] [build/test flags & test binary flags]"
+const testUsage = "go test [build/test flags] [packages] [build/test flags & test binary flags]"
 
 var CmdTest = &base.Command{
 	CustomFlags: true,
@@ -168,7 +169,7 @@ flags are also accessible by 'go test'.
 
 // Usage prints the usage message for 'go test -h' and exits.
 func Usage() {
-	os.Stderr.WriteString(testUsage + "\n\n" +
+	os.Stderr.WriteString("usage: " + testUsage + "\n\n" +
 		strings.TrimSpace(testFlag1) + "\n\n\t" +
 		strings.TrimSpace(testFlag2) + "\n")
 	os.Exit(2)
@@ -527,6 +528,8 @@ var testVetFlags = []string{
 }
 
 func runTest(cmd *base.Command, args []string) {
+	modload.LoadTests = true
+
 	pkgArgs, testArgs = testFlags(args)
 
 	work.FindExecCmd() // initialize cached result

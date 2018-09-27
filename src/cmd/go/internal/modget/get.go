@@ -29,13 +29,13 @@ import (
 var CmdGet = &base.Command{
 	// Note: -d -m -u are listed explicitly because they are the most common get flags.
 	// Do not send CLs removing them because they're covered by [get flags].
-	UsageLine: "get [-d] [-m] [-u] [-v] [-insecure] [build flags] [packages]",
+	UsageLine: "go get [-d] [-m] [-u] [-v] [-insecure] [build flags] [packages]",
 	Short:     "add dependencies to current module and install them",
 	Long: `
 Get resolves and adds dependencies to the current development module
 and then builds and installs them.
 
-The first step is to resolve which dependencies to add. 
+The first step is to resolve which dependencies to add.
 
 For each named package or package pattern, get must decide which version of
 the corresponding module to use. By default, get chooses the latest tagged
@@ -189,6 +189,11 @@ type task struct {
 }
 
 func runGet(cmd *base.Command, args []string) {
+	// -mod=readonly has no effect on "go get".
+	if cfg.BuildMod == "readonly" {
+		cfg.BuildMod = ""
+	}
+
 	switch getU {
 	case "", "patch", "true":
 		// ok
@@ -205,8 +210,8 @@ func runGet(cmd *base.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "go get: -t flag is a no-op when using modules\n")
 	}
 
-	if cfg.BuildGetmode == "vendor" {
-		base.Fatalf("go get: disabled by -getmode=vendor")
+	if cfg.BuildMod == "vendor" {
+		base.Fatalf("go get: disabled by -mod=%s", cfg.BuildMod)
 	}
 
 	modload.LoadBuildList()
@@ -224,7 +229,7 @@ func runGet(cmd *base.Command, args []string) {
 	// and a list of install targets (for the "go install" at the end).
 	var tasks []*task
 	var install []string
-	for _, arg := range search.CleanImportPaths(args) {
+	for _, arg := range search.CleanPatterns(args) {
 		// Argument is module query path@vers, or else path with implicit @latest.
 		path := arg
 		vers := ""
@@ -344,7 +349,7 @@ func runGet(cmd *base.Command, args []string) {
 	base.ExitIfErrors()
 
 	// Now we've reduced the upgrade/downgrade work to a list of path@vers pairs (tasks).
-	// Resolve each one in parallell.
+	// Resolve each one in parallel.
 	reqs := modload.Reqs()
 	var lookup par.Work
 	for _, t := range tasks {
@@ -369,7 +374,7 @@ func runGet(cmd *base.Command, args []string) {
 	// Now we know the specific version of each path@vers.
 	// The final build list will be the union of three build lists:
 	//	1. the original build list
-	//	2. the modules named on the command line
+	//	2. the modules named on the command line (other than @none)
 	//	3. the upgraded requirements of those modules (if upgrading)
 	// Start building those lists.
 	// This loop collects (2).
@@ -390,7 +395,9 @@ func runGet(cmd *base.Command, args []string) {
 			continue // already added
 		}
 		byPath[t.m.Path] = t
-		named = append(named, t.m)
+		if t.m.Version != "none" {
+			named = append(named, t.m)
+		}
 	}
 	base.ExitIfErrors()
 
@@ -508,18 +515,34 @@ func runGet(cmd *base.Command, args []string) {
 	}
 
 	if len(install) > 0 {
+		// All requested versions were explicitly @none.
+		// Note that 'go get -u' without any arguments results in len(install) == 1:
+		// search.CleanImportPaths returns "." for empty args.
 		work.BuildInit()
-		var pkgs []string
-		for _, p := range load.PackagesAndErrors(install) {
-			if p.Error == nil || !strings.HasPrefix(p.Error.Err, "no Go files") {
-				pkgs = append(pkgs, p.ImportPath)
+		pkgs := load.PackagesAndErrors(install)
+		var todo []*load.Package
+		for _, p := range pkgs {
+			// Ignore "no Go source files" errors for 'go get' operations on modules.
+			if p.Error != nil {
+				if len(args) == 0 && getU != "" && strings.HasPrefix(p.Error.Err, "no Go files") {
+					// Upgrading modules: skip the implicitly-requested package at the
+					// current directory, even if it is not tho module root.
+					continue
+				}
+				if strings.Contains(p.Error.Err, "cannot find module providing") && modload.ModuleInfo(p.ImportPath) != nil {
+					// Explicitly-requested module, but it doesn't contain a package at the
+					// module root.
+					continue
+				}
 			}
+			todo = append(todo, p)
 		}
+
 		// If -d was specified, we're done after the download: no build.
 		// (The load.PackagesAndErrors is what did the download
 		// of the named packages and their dependencies.)
-		if len(pkgs) > 0 && !*getD {
-			work.InstallPackages(pkgs)
+		if len(todo) > 0 && !*getD {
+			work.InstallPackages(install, todo)
 		}
 	}
 }
@@ -529,13 +552,6 @@ func runGet(cmd *base.Command, args []string) {
 // If forceModulePath is set, getQuery must interpret path
 // as a module path.
 func getQuery(path, vers string, forceModulePath bool) (module.Version, error) {
-	if path == modload.Target.Path {
-		if vers != "" {
-			return module.Version{}, fmt.Errorf("cannot update main module to explicit version")
-		}
-		return modload.Target, nil
-	}
-
 	if vers == "" {
 		vers = "latest"
 	}
@@ -547,34 +563,14 @@ func getQuery(path, vers string, forceModulePath bool) (module.Version, error) {
 		return module.Version{Path: path, Version: info.Version}, nil
 	}
 
-	// Even if the query fails, if the path is (or must be) a real module, then report the query error.
-	if forceModulePath || *getM || isModulePath(path) {
+	// Even if the query fails, if the path must be a real module, then report the query error.
+	if forceModulePath || *getM {
 		return module.Version{}, err
 	}
 
-	// Otherwise, interpret the package path as an import
-	// and determine what module that import would address
-	// if found in the current source code.
-	// Then apply the version to that module.
-	m, _, err := modload.Import(path)
-	if err != nil {
-		return module.Version{}, err
-	}
-	if m.Path == "" {
-		return module.Version{}, fmt.Errorf("package %q is not in a module", path)
-	}
-	info, err = modload.Query(m.Path, vers, modload.Allowed)
-	if err != nil {
-		return module.Version{}, err
-	}
-	return module.Version{Path: m.Path, Version: info.Version}, nil
-}
-
-// isModulePath reports whether path names an actual module,
-// defined as one with an accessible latest version.
-func isModulePath(path string) bool {
-	_, err := modload.Query(path, "latest", modload.Allowed)
-	return err == nil
+	// Otherwise, try a package path.
+	m, _, err := modload.QueryPackage(path, vers, modload.Allowed)
+	return m, err
 }
 
 // An upgrader adapts an underlying mvs.Reqs to apply an

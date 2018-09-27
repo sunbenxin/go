@@ -1263,7 +1263,7 @@ func typecheck1(n *Node, top int) *Node {
 			n.Op = OCALLFUNC
 			if t.Etype != TFUNC {
 				name := l.String()
-				if isBuiltinFuncName(name) {
+				if isBuiltinFuncName(name) && l.Name.Defn != nil {
 					// be more specific when the function
 					// name matches a predeclared function
 					yyerror("cannot call non-function %s (type %v), declared at %s",
@@ -3298,7 +3298,8 @@ func samesafeexpr(l *Node, r *Node) bool {
 	case ODOT, ODOTPTR:
 		return l.Sym != nil && r.Sym != nil && l.Sym == r.Sym && samesafeexpr(l.Left, r.Left)
 
-	case OIND, OCONVNOP:
+	case OIND, OCONVNOP,
+		ONOT, OCOM, OPLUS, OMINUS:
 		return samesafeexpr(l.Left, r.Left)
 
 	case OCONV:
@@ -3306,7 +3307,8 @@ func samesafeexpr(l *Node, r *Node) bool {
 		// Allow only numeric-ish types. This is a bit conservative.
 		return issimple[l.Type.Etype] && samesafeexpr(l.Left, r.Left)
 
-	case OINDEX, OINDEXMAP:
+	case OINDEX, OINDEXMAP,
+		OADD, OSUB, OOR, OXOR, OMUL, OLSH, ORSH, OAND, OANDNOT, ODIV, OMOD:
 		return samesafeexpr(l.Left, r.Left) && samesafeexpr(l.Right, r.Right)
 
 	case OLITERAL:
@@ -3333,10 +3335,17 @@ func typecheckas(n *Node) {
 		n.Left = typecheck(n.Left, Erv|Easgn)
 	}
 
-	n.Right = typecheck(n.Right, Erv)
+	// Use Efnstruct so we can emit an "N variables but M values" error
+	// to be consistent with typecheckas2 (#26616).
+	n.Right = typecheck(n.Right, Erv|Efnstruct)
 	checkassign(n, n.Left)
 	if n.Right != nil && n.Right.Type != nil {
-		if n.Left.Type != nil {
+		if n.Right.Type.IsFuncArgStruct() {
+			yyerror("assignment mismatch: 1 variable but %d values", n.Right.Type.NumFields())
+			// Multi-value RHS isn't actually valid for OAS; nil out
+			// to indicate failed typechecking.
+			n.Right.Type = nil
+		} else if n.Left.Type != nil {
 			n.Right = assignconv(n.Right, n.Left.Type, "assignment")
 		}
 	}
@@ -3608,21 +3617,14 @@ func copytype(n *Node, t *types.Type) {
 	}
 
 	// Double-check use of type as embedded type.
-	lno := lineno
-
 	if embedlineno.IsKnown() {
-		lineno = embedlineno
 		if t.IsPtr() || t.IsUnsafePtr() {
-			yyerror("embedded type cannot be a pointer")
+			yyerrorl(embedlineno, "embedded type cannot be a pointer")
 		}
 	}
-
-	lineno = lno
 }
 
 func typecheckdeftype(n *Node) {
-	lno := lineno
-	setlineno(n)
 	n.Type.Sym = n.Sym
 	n.SetTypecheck(1)
 	n.Name.Param.Ntype = typecheck(n.Name.Param.Ntype, Etype)
@@ -3637,30 +3639,25 @@ func typecheckdeftype(n *Node) {
 		// that don't come along.
 		copytype(n, t)
 	}
-
-	lineno = lno
 }
 
 func typecheckdef(n *Node) {
-	lno := lineno
-	setlineno(n)
+	lno := setlineno(n)
 
 	if n.Op == ONONAME {
 		if !n.Diag() {
 			n.SetDiag(true)
-			if n.Pos.IsKnown() {
-				lineno = n.Pos
-			}
 
 			// Note: adderrorname looks for this string and
 			// adds context about the outer expression
-			yyerror("undefined: %v", n.Sym)
+			yyerrorl(lineno, "undefined: %v", n.Sym)
 		}
-
+		lineno = lno
 		return
 	}
 
 	if n.Walkdef() == 1 {
+		lineno = lno
 		return
 	}
 
@@ -3703,20 +3700,19 @@ func typecheckdef(n *Node) {
 		e := n.Name.Defn
 		n.Name.Defn = nil
 		if e == nil {
-			lineno = n.Pos
 			Dump("typecheckdef nil defn", n)
-			yyerror("xxx")
+			yyerrorl(n.Pos, "xxx")
 		}
 
 		e = typecheck(e, Erv)
 		if Isconst(e, CTNIL) {
-			yyerror("const initializer cannot be nil")
+			yyerrorl(n.Pos, "const initializer cannot be nil")
 			goto ret
 		}
 
 		if e.Type != nil && e.Op != OLITERAL || !e.isGoConst() {
 			if !e.Diag() {
-				yyerror("const initializer %v is not a constant", e)
+				yyerrorl(n.Pos, "const initializer %v is not a constant", e)
 				e.SetDiag(true)
 			}
 
@@ -3726,12 +3722,12 @@ func typecheckdef(n *Node) {
 		t := n.Type
 		if t != nil {
 			if !okforconst[t.Etype] {
-				yyerror("invalid constant type %v", t)
+				yyerrorl(n.Pos, "invalid constant type %v", t)
 				goto ret
 			}
 
 			if !e.Type.IsUntyped() && !eqtype(t, e.Type) {
-				yyerror("cannot use %L as type %v in const initializer", e, t)
+				yyerrorl(n.Pos, "cannot use %L as type %v in const initializer", e, t)
 				goto ret
 			}
 

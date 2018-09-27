@@ -25,11 +25,14 @@ var HelpGoproxy = &base.Command{
 	Short:     "module proxy protocol",
 	Long: `
 The go command by default downloads modules from version control systems
-directly, just as 'go get' always has. If the GOPROXY environment variable
-is set to the URL of a module proxy, the go command will instead fetch
-all modules from that proxy. No matter the source of the modules, downloaded
-modules must match existing entries in go.sum (see 'go help modules' for
-discussion of verification).
+directly, just as 'go get' always has. The GOPROXY environment variable allows
+further control over the download source. If GOPROXY is unset, is the empty string,
+or is the string "direct", downloads use the default direct connection to version
+control systems. Setting GOPROXY to "off" disallows downloading modules from
+any source. Otherwise, GOPROXY is expected to be the URL of a module proxy,
+in which case the go command will fetch all modules from that proxy.
+No matter the source of the modules, downloaded modules must match existing
+entries in go.sum (see 'go help modules' for discussion of verification).
 
 A Go module proxy is any web server that can respond to GET requests for
 URLs of a specified form. The requests have no query parameters, so even
@@ -52,7 +55,7 @@ for that version of the given module.
 
 To avoid problems when serving from case-sensitive file systems,
 the <module> and <version> elements are case-encoded, replacing every
-uppercase letter with an exclamation mark followed by the correponding
+uppercase letter with an exclamation mark followed by the corresponding
 lower-case letter: github.com/Azure encodes as github.com/!azure.
 
 The JSON-formatted metadata about a given module corresponds to
@@ -74,10 +77,10 @@ archive.
 
 Even when downloading directly from version control systems,
 the go command synthesizes explicit info, mod, and zip files
-and stores them in its local cache, $GOPATH/src/mod/cache/download,
+and stores them in its local cache, $GOPATH/pkg/mod/cache/download,
 the same as if it had downloaded them directly from a proxy.
 The cache layout is the same as the proxy URL space, so
-serving $GOPATH/src/mod/cache/download at (or copying it to)
+serving $GOPATH/pkg/mod/cache/download at (or copying it to)
 https://example.com/proxy would let other users access those
 cached module versions with GOPROXY=https://example.com/proxy.
 `,

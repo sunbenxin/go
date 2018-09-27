@@ -2324,6 +2324,9 @@ func testTimeoutHandler(t *testing.T, h2 bool) {
 	if !strings.Contains(string(body), "<title>Timeout</title>") {
 		t.Errorf("expected timeout body; got %q", string(body))
 	}
+	if g, w := res.Header.Get("Content-Type"), "text/html; charset=utf-8"; g != w {
+		t.Errorf("response content-type = %q; want %q", g, w)
+	}
 
 	// Now make the previously-timed out handler speak again,
 	// which verifies the panic is handled:
@@ -2985,7 +2988,7 @@ func testRequestBodyLimit(t *testing.T, h2 bool) {
 // side of their TCP connection, the server doesn't send a 400 Bad Request.
 func TestClientWriteShutdown(t *testing.T) {
 	if runtime.GOOS == "plan9" {
-		t.Skip("skipping test; see https://golang.org/issue/7237")
+		t.Skip("skipping test; see https://golang.org/issue/17906")
 	}
 	defer afterTest(t)
 	ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, r *Request) {}))
@@ -3578,26 +3581,6 @@ func TestHeaderToWire(t *testing.T) {
 				}
 				if strings.Contains(got, "Too-Late") {
 					return errors.New("shouldn't have seen Too-Late")
-				}
-				return nil
-			},
-		},
-		{
-			name: "Nosniff without Content-type",
-			handler: func(rw ResponseWriter, r *Request) {
-				rw.Header().Set("X-Content-Type-Options", "nosniff")
-				rw.WriteHeader(200)
-				rw.Write([]byte("<!doctype html>\n<html><head></head><body>some html</body></html>"))
-			},
-			check: func(got, logs string) error {
-				if !strings.Contains(got, "Content-Type: application/octet-stream\r\n") {
-					return errors.New("Output should have an innocuous content-type")
-				}
-				if strings.Contains(got, "text/html") {
-					return errors.New("Output should not have a guess")
-				}
-				if !strings.Contains(logs, "X-Content-Type-Options:nosniff but no Content-Type") {
-					return errors.New("Expected log message")
 				}
 				return nil
 			},

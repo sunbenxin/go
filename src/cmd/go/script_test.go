@@ -85,8 +85,9 @@ func (ts *testScript) setup() {
 	ts.cd = filepath.Join(ts.workdir, "gopath/src")
 	ts.env = []string{
 		"WORK=" + ts.workdir, // must be first for ts.abbrev
-		"PATH=" + os.Getenv("PATH"),
+		"PATH=" + testBin + string(filepath.ListSeparator) + os.Getenv("PATH"),
 		homeEnvName() + "=/no-home",
+		"CCACHE_DISABLE=1", // ccache breaks with non-existent HOME
 		"GOARCH=" + runtime.GOARCH,
 		"GOCACHE=" + testGOCACHE,
 		"GOOS=" + runtime.GOOS,
@@ -96,6 +97,10 @@ func (ts *testScript) setup() {
 		tempEnvName() + "=" + filepath.Join(ts.workdir, "tmp"),
 		"devnull=" + os.DevNull,
 		":=" + string(os.PathListSeparator),
+	}
+
+	if runtime.GOOS == "plan9" {
+		ts.env = append(ts.env, "path="+testBin+string(filepath.ListSeparator)+os.Getenv("path"))
 	}
 
 	if runtime.GOOS == "windows" {
@@ -624,6 +629,9 @@ func scriptMatch(ts *testScript, neg bool, args []string, text, name string) {
 		text = string(data)
 	}
 
+	// Matching against workdir would be misleading.
+	text = strings.Replace(text, ts.workdir, "$WORK", -1)
+
 	if neg {
 		if re.MatchString(text) {
 			if isGrep {
@@ -702,7 +710,7 @@ func (ts *testScript) check(err error) {
 // exec runs the given command line (an actual subprocess, not simulated)
 // in ts.cd with environment ts.env and then returns collected standard output and standard error.
 func (ts *testScript) exec(command string, args ...string) (stdout, stderr string, err error) {
-	cmd := exec.Command(testGo, args...)
+	cmd := exec.Command(command, args...)
 	cmd.Dir = ts.cd
 	cmd.Env = append(ts.env, "PWD="+ts.cd)
 	var stdoutBuf, stderrBuf strings.Builder

@@ -402,10 +402,64 @@ func store_be16_idx(b []byte, idx int) {
 	binary.BigEndian.PutUint16(b[idx:], sink16)
 }
 
+func store_le_byte_2(b []byte, val uint16) {
+	_ = b[2]
+	// arm64:`MOVH\sR[0-9]+,\s1\(R[0-9]+\)`,-`MOVB`
+	b[1], b[2] = byte(val), byte(val>>8)
+}
+
+func store_le_byte_4(b []byte, val uint32) {
+	_ = b[4]
+	// arm64:`MOVW\sR[0-9]+,\s1\(R[0-9]+\)`,-`MOVB`,-`MOVH`
+	b[1], b[2], b[3], b[4] = byte(val), byte(val>>8), byte(val>>16), byte(val>>24)
+}
+
+func store_le_byte_8(b []byte, val uint64) {
+	_ = b[8]
+	// arm64:`MOVD\sR[0-9]+,\s1\(R[0-9]+\)`,-`MOVB`,-`MOVH`,-`MOVW`
+	b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8] = byte(val), byte(val>>8), byte(val>>16), byte(val>>24), byte(val>>32), byte(val>>40), byte(val>>48), byte(val>>56)
+}
+
+func store_be_byte_2(b []byte, val uint16) {
+	_ = b[2]
+	// arm64:`REV16W`,`MOVH\sR[0-9]+,\s1\(R[0-9]+\)`,-`MOVB`
+	b[1], b[2] = byte(val>>8), byte(val)
+}
+
+func store_be_byte_4(b []byte, val uint32) {
+	_ = b[4]
+	// arm64:`REVW`,`MOVW\sR[0-9]+,\s1\(R[0-9]+\)`,-`MOVB`,-`MOVH`,-`REV16W`
+	b[1], b[2], b[3], b[4] = byte(val>>24), byte(val>>16), byte(val>>8), byte(val)
+}
+
+func store_be_byte_8(b []byte, val uint64) {
+	_ = b[8]
+	// arm64:`REV`,`MOVD\sR[0-9]+,\s1\(R[0-9]+\)`,-`MOVB`,-`MOVH`,-`MOVW`,-`REV16W`,-`REVW`
+	b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8] = byte(val>>56), byte(val>>48), byte(val>>40), byte(val>>32), byte(val>>24), byte(val>>16), byte(val>>8), byte(val)
+}
+
+func store_le_byte_2_idx(b []byte, idx int, val uint16) {
+	_, _ = b[idx+0], b[idx+1]
+	// arm64:`MOVH\sR[0-9]+,\s\(R[0-9]+\)\(R[0-9]+\)`,-`MOVB`
+	b[idx+1], b[idx+0] = byte(val>>8), byte(val)
+}
+
+func store_le_byte_4_idx(b []byte, idx int, val uint32) {
+	_, _, _, _ = b[idx+0], b[idx+1], b[idx+2], b[idx+3]
+	// arm64:`MOVW\sR[0-9]+,\s\(R[0-9]+\)\(R[0-9]+\)`,-`MOVB`,-`MOVH`
+	b[idx+3], b[idx+2], b[idx+1], b[idx+0] = byte(val>>24), byte(val>>16), byte(val>>8), byte(val)
+}
+
 func store_be_byte_2_idx(b []byte, idx int, val uint16) {
 	_, _ = b[idx+0], b[idx+1]
 	// arm64:`REV16W`,`MOVH\sR[0-9]+,\s\(R[0-9]+\)\(R[0-9]+\)`,-`MOVB`
 	b[idx+0], b[idx+1] = byte(val>>8), byte(val)
+}
+
+func store_be_byte_4_idx(b []byte, idx int, val uint32) {
+	_, _, _, _ = b[idx+0], b[idx+1], b[idx+2], b[idx+3]
+	// arm64:`REVW`,`MOVW\sR[0-9]+,\s\(R[0-9]+\)\(R[0-9]+\)`,-`MOVB`,-`MOVH`,-`REV16W`
+	b[idx+0], b[idx+1], b[idx+2], b[idx+3] = byte(val>>24), byte(val>>16), byte(val>>8), byte(val)
 }
 
 func store_be_byte_2_idx2(b []byte, idx int, val uint16) {
@@ -449,7 +503,7 @@ func zero_byte_16(b []byte) {
 
 /* TODO: enable them when corresponding optimization are implemented
 func zero_byte_4_idx(b []byte, idx int) {
-	// arm64: `MOVW\sZR,\s\(R[0-9]+\)\(R[0-9]+<<2\)`,-`MOV[BH]`
+	// arm64(DISABLED): `MOVW\sZR,\s\(R[0-9]+\)\(R[0-9]+<<2\)`,-`MOV[BH]`
 	b[(idx<<2)+0] = 0
 	b[(idx<<2)+1] = 0
 	b[(idx<<2)+2] = 0
@@ -457,7 +511,7 @@ func zero_byte_4_idx(b []byte, idx int) {
 }
 
 func zero_byte_8_idx(b []byte, idx int) {
-	// arm64: `MOVD\sZR,\s\(R[0-9]+\)\(R[0-9]+<<3\)`,-`MOV[BHW]`
+	// arm64(DISABLED): `MOVD\sZR,\s\(R[0-9]+\)\(R[0-9]+<<3\)`,-`MOV[BHW]`
 	b[(idx<<3)+0] = 0
 	b[(idx<<3)+1] = 0
 	b[(idx<<3)+2] = 0
