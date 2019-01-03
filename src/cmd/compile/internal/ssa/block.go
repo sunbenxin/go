@@ -198,6 +198,7 @@ func (b *Block) swapSuccessors() {
 	b.Likely *= -1
 }
 
+// DONE
 // LackingPos indicates whether b is a block whose position should be inherited
 // from its successors.  This is true if all the values within it have unreliable positions
 // and if it is "plain", meaning that there is no control flow that is also very likely
